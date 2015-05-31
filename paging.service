@@ -1,0 +1,11 @@
+[Unit]
+Description=SIP client that autoanswers, perfect for a Paging system
+Wants=network-online.target
+
+[Service]
+user=dan
+Type=simple
+ExecStart=/usr/bin/python /opt/autoanswer.py
+
+[Install]
+WantedBy=multi-user.target
