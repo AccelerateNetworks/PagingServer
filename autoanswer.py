@@ -83,7 +83,7 @@ class CallCallback(pj.CallCallback):
 
 if __name__ == "__main__":
     config = ConfigParser.SafeConfigParser()
-    config.read(['config.conf', 'callpipe.conf', '/etc/callpipe.conf'] + sys.argv[1:])
+    config.read(['config.conf', '/etc/config.conf', 'callpipe.conf', '/etc/callpipe.conf'] + sys.argv[1:])
 
     try:
         # Create library instance
