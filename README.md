@@ -15,7 +15,7 @@ svn co http://svn.pjsip.org/repos/pjproject/trunk pjsip
 ### Compile PJSIP
 ```
 cd pjsip
-./configure && make dep && make
+export CFLAGS="$CFLAGS -fPIC" && ./configure && make dep && make
 ```
 ### Install PJSUA
 ```
