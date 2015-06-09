@@ -31,7 +31,7 @@ cd PagingServer
 ### Put the files in the right places
 ```
 sudo cp autoanswer.py /opt/autoanswer.py
-sudo cp config.conf /etc/config.conf
+sudo cp config.conf /etc/paging.conf
 sudo cp paging.service /etc/systemd/system/paging.service
 ```
 ### Enable systemd service
@@ -40,7 +40,7 @@ systemctl enable paging.service
 ```
 ### Add your SIP account
 ```
-sudo nano /etc/config.conf
+sudo nano /etc/paging.conf
 ```
 Change the top 3 values to your SIP server, username (usually ext. number) and password. Get rid of the PA section from [PA] down unless you want a .wav to be played prior to each call.
 
