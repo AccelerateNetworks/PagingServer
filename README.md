@@ -5,7 +5,7 @@ Announcement/PA/Paging/Public Address Server stuff to do the needful.
 These instructions are for Debian-based Linux distributions. They should point you in the right direction to set this up on other distributions - just don't expect them to work verbatim.
 ### Install the Dependencies
 ```
-sudo apt-get install build-essential python2.7-dev nano subversion git
+sudo apt-get install build-essential python2.7-dev python-pip libasound2-dev nano subversion git
 sudo pip install raven
 ```
 ### Download PJSIP
