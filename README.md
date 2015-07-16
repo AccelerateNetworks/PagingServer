@@ -31,7 +31,7 @@ cd PagingServer
 ### Put the files in the right places
 ```
 sudo cp autoanswer.py /opt/autoanswer.py
-sudo cp config.conf /etc/paging.conf
+sudo cp paging.conf /etc/paging.conf
 sudo cp paging.service /etc/systemd/system/paging.service
 ```
 ### Enable systemd service
@@ -58,6 +58,33 @@ Start the systemd service (nonfunctional!!!)
 sudo service paging start
 ```
 
-## Benchmarks
+## Benchmarking
 
 We've tested this script with thousands of calls, it is fairly reliable and light on resources. Total CPU use on a Pentium 4 @ 2.8ghz hovered around 0.5% with 4MB ram usage. identical figures were observed on a Celeron D @ 2.53Ghz, you could probably get away with whatever your operating system requires to run in terms of hardware.
+
+To benchmark, you'll need to set up callram.py.
+
+### Setting up callram.py
+This setup assumes you have PJSUA installed, if not, go back to Installation earlier in this readme and install it.
+
+### Put the files in the right places
+```
+sudo cp callram.py /opt/callram.py
+sudo cp callram.conf /etc/callram.conf
+```
+### Add your SIP account
+```
+sudo nano /etc/callram.conf
+```
+Change the top 3 values to your SIP server, username (usually ext. number) and password. 
+
+Then fill in both SIP URI: fields (uri= and to=) with the SIP URI of the client you'd like to test. SIP URIs are usually formatted as sip:<extension#>@<exampledomain.com> in most cases. The Domain may sometimes be an IPv4 or IPv6 address depending on your setup.
+ 
+
+## Running the Paging Server
+Run either of the commands below:
+```
+Run in bash/terminal:
+/usr/bin/python /opt/callram.py
+
+
