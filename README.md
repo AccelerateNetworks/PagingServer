@@ -78,7 +78,7 @@ sudo nano /etc/callram.conf
 ```
 Change the top 3 values to your SIP server, username (usually ext. number) and password. 
 
-Then fill in both SIP URI: fields (uri= and to=) with the SIP URI of the client you'd like to test. SIP URIs are usually formatted as sip:<extension#>@<exampledomain.com> in most cases. The Domain may sometimes be an IPv4 or IPv6 address depending on your setup.
+Then fill in both SIP URI: fields (uri= and to=) with the SIP URI of the client you'd like to test. SIP URIs are usually formatted as `sip:<extension#>@<exampledomain.com>` in most cases. The Domain may sometimes be an IPv4 or IPv6 address depending on your setup.
  
 
 ## Running the Paging Server
@@ -86,5 +86,4 @@ Run either of the commands below:
 ```
 Run in bash/terminal:
 /usr/bin/python /opt/callram.py
-
-
+```
