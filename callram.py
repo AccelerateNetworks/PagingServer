@@ -33,7 +33,7 @@ except:
 
 
 config = ConfigParser.SafeConfigParser()
-config.read('config.ini')
+config.read('config.ini', 'callram.conf', '/etc/callram.conf')
 
 
 # Logging callback
