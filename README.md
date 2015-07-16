@@ -31,7 +31,7 @@ cd PagingServer
 ### Put the files in the right places
 ```
 sudo cp autoanswer.py /opt/autoanswer.py
-sudo cp paging.conf /etc/paging.conf
+sudo cp paging.example.conf /etc/paging.conf
 sudo cp paging.service /etc/systemd/system/paging.service
 ```
 ### Enable systemd service
@@ -70,7 +70,7 @@ This setup assumes you have PJSUA installed, if not, go back to Installation ear
 ### Put the files in the right places
 ```
 sudo cp callram.py /opt/callram.py
-sudo cp callram.conf /etc/callram.conf
+sudo cp callram.example.conf /etc/callram.conf
 ```
 ### Add your SIP account
 ```
