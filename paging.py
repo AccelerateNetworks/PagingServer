@@ -2,13 +2,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
-import os
-import sys
+from ConfigParser import SafeConfigParser
+import os, sys, time, signal, functools
+
 import pjsua as pj
-import ConfigParser
-import time
-import functools
-import signal
 
 
 class Defaults(object):
@@ -141,7 +138,8 @@ def main(args=None, defaults=None):
         raven_client = raven.Client(opts.sentry_dsn)
         # XXX: can be hooked-up into logging and/or sys.excepthook
 
-    config = ConfigParser.SafeConfigParser()
+    config = SafeConfigParser()
+
     config.read(
         map(os.path.expanduser, list(Defaults.conf_paths) + list(opts.conf or list()))
         + list(sys.argv[1:] if args is None else args) )
