@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 from ConfigParser import SafeConfigParser
+from os.path import join, exists, expanduser
 import os, sys, time, signal, functools
 
 import pjsua as pj
@@ -21,10 +22,10 @@ def err_report_wrapper(func):
     @functools.wraps(func)
     def _wrapper(*args, **kws):
         try: return func(*args, **kws)
-        except Exception as e:
+        except Exception as err:
             if raven_client: raven_client.captureException()
-            if func.func_name == '__init__': raise
-            if log: log.exception('ERROR (%s): %s', func.func_name, e)
+            if func.func_name == '__init__': raise # these are always fatal
+            if log: log.exception('ERROR (%s): %s', func.func_name, err)
     return _wrapper
 
 
@@ -139,10 +140,11 @@ def main(args=None, defaults=None):
         # XXX: can be hooked-up into logging and/or sys.excepthook
 
     config = SafeConfigParser()
-
-    config.read(
-        map(os.path.expanduser, list(Defaults.conf_paths) + list(opts.conf or list()))
-        + list(sys.argv[1:] if args is None else args) )
+    conf_user_paths = map(expanduser, opts.conf or list())
+    for p in conf_user_paths:
+        if not os.access(p, os.O_RDONLY):
+            parser.error('Specified config file does not exists: {}'.format(p))
+    config.read(list(Defaults.conf_paths) + conf_user_paths)
 
     if opts.systemd:
         from systemd import daemon
