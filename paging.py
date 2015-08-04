@@ -185,7 +185,7 @@ class PagingServer(object):
 
         log.debug('pjsua event loop started')
         while True:
-            if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 1
+            if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
             else:
                 ts = time.time()
                 max_poll_delay = self.sd_cycle.ts_next - ts
