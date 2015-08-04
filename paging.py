@@ -64,6 +64,8 @@ def get_logger(logger=None, root=['__main__', 'paging']):
     return logger
 
 
+### PJSUA handlers
+
 class AccountCallback(pj.AccountCallback):
 
     @err_report_wrapper
@@ -118,6 +120,8 @@ class CallCallback(pj.CallCallback):
             log.debug('Media is inactive')
 
 
+
+### Server
 
 class PagingServer(object):
 
