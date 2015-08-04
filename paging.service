@@ -10,8 +10,8 @@ RestartSec=30
 StartLimitInterval=10min
 StartLimitBurst=10
 
-User=autoanswer
-ExecStart=/usr/bin/autoanswer --systemd
+User=paging
+ExecStart=/opt/bin/paging.py --systemd
 
 [Install]
 WantedBy=multi-user.target
