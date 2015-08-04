@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
 from ConfigParser import SafeConfigParser
 from os.path import join, exists, expanduser
 import os, sys, types, time, signal, logging, inspect
@@ -62,6 +63,14 @@ def get_logger(logger=None, root=['__main__', 'paging']):
     if isinstance(logger, types.StringTypes):
         logger = logging.getLogger(logger)
     return logger
+
+@contextmanager
+def suppress_fd(fd):
+    with open(os.devnull, 'wb') as file_null:
+        fd_bak, fd_null = os.dup(fd), file_null.fileno()
+        os.dup2(fd_null, fd)
+        yield
+        os.dup2(fd_bak, fd)
 
 
 ### PJSUA handlers
@@ -128,18 +137,28 @@ class PagingServer(object):
     lib = None
 
     @err_report_wrapper
-    def __init__(self, config, sd_cycle=None):
-        self.config, self.sd_cycle = config, sd_cycle
+    def __init__(self, opts, config, sd_cycle=None):
+        self.opts, self.config, self.sd_cycle = opts, config, sd_cycle
         self.log = get_logger()
 
     @err_report_fatal
     def init(self):
         self.log.debug('pjsua init')
-        self.lib = lib = pj.Lib()
-        ua = pj.UAConfig()
-        ua.max_calls = 10
-        ua.user_agent = 'PagingServer/git (+https://github.com/AccelerateNetworks/PagingServer)'
-        lib.init(ua) # XXX: logging config, media config
+
+        with suppress_fd(1):
+            self.lib = lib = pj.Lib()
+
+        conf_ua = pj.UAConfig()
+        conf_ua.max_calls = 10
+        conf_ua.user_agent = ( 'PagingServer/git'
+            ' (+https://github.com/AccelerateNetworks/PagingServer)' )
+
+        conf_log = lambda level,msg,n,\
+            log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
+        conf_log = pj.LogConfig(level=self.opts.pjsua_log_level, callback=conf_log)
+
+        lib.init(conf_ua, conf_log) # XXX: media config
+
         transport = lib.create_transport(pj.TransportType.UDP)
         lib.start(with_thread=False)
 
@@ -199,7 +218,12 @@ def main(args=None, defaults=None):
         default=Defaults.raven_dsn,
         help='Use specified sentry DSN to capture errors/logging using'
             ' "raven" module. Enabled by default, empty or "none" - do not use. Default: %(default)s')
+
     parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+    parser.add_argument('--pjsua-log-level',
+        metavar='0-10', type=int, default=0,
+        help='pjsua lib logging level. Only used when --debug is enabled.'
+            ' Zero is only for fatal errors, higher levels are more noisy. Default: %(default)s')
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
     global log
@@ -222,6 +246,7 @@ def main(args=None, defaults=None):
         if not os.access(p, os.O_RDONLY):
             parser.error('Specified config file does not exists: {}'.format(p))
     config.read(list(Defaults.conf_paths) + conf_user_paths)
+    server_opts = type('ServerOpts', (object,), dict(vars(opts)))
 
     if opts.systemd:
         from systemd import daemon
@@ -251,10 +276,11 @@ def main(args=None, defaults=None):
     else: sd_cycle = None
 
     log.info('Starting PagingServer...')
-    with PagingServer(config, sd_cycle) as server:
+    with PagingServer(server_opts, config, sd_cycle) as server:
         for sig in signal.SIGINT, signal.SIGTERM:
             signal.signal(sig, lambda sig,frm: server.destroy())
         server.run()
     log.info('Finished')
+    os._exit(0) # XXX: to prevent weird pjsua re-init (on gc?)
 
 if __name__ == '__main__': sys.exit(main())
