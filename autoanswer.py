@@ -112,7 +112,7 @@ def main(args=None, defaults=None):
     parser.add_argument('--sentry-dsn', metavar='dsn',
         default=Defaults.raven_dsn,
         help='Use specified sentry DSN to capture errors/logging using'
-            ' "raven" module. Enabled by default, empty - do not use. Default: %(default)s')
+            ' "raven" module. Enabled by default, empty or "none" - do not use. Default: %(default)s')
     parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -124,7 +124,7 @@ def main(args=None, defaults=None):
         level=logging.DEBUG if opts.debug else logging.WARNING )
     log = logging.getLogger()
 
-    if opts.sentry_dsn.strip():
+    if opts.sentry_dsn.strip() not in ['none', '']:
         global raven_client
         import raven
         raven_client = raven.Client(opts.sentry_dsn)
