@@ -8,6 +8,7 @@ import pjsua as pj
 import ConfigParser
 import time
 import functools
+import signal
 
 
 class Defaults(object):
@@ -86,13 +87,18 @@ class CallCallback(pj.CallCallback):
 
 
 @err_report_wrapper
-def handle_calls_loop(lib, config):
+def handle_calls_loop(lib, config, sd_cycle):
     acc = lib.create_account(pj.AccountConfig(
         config.get('sip', 'domain'),
         config.get('sip', 'user'),
         config.get('sip', 'pass')
     ), cb=AccountCallback())
+
+    ts_next = time.time()
     while True:
+        while True:
+            if not sd_cycle or not sd_cycle.ts_next: break
+            sd_cycle()
         try: time.sleep(3600)
         except KeyboardInterrupt: break
 
@@ -109,6 +115,10 @@ def main(args=None, defaults=None):
             ' Values in latter ones override those in the former.'
             ' Initial files (always loaded, if exist): {}'.format(' '.join(Defaults.conf_paths)))
 
+    parser.add_argument('--systemd', action='store_true',
+        help='Use systemd service'
+            ' notification/watchdog mechanisms in daemon modes, if available.')
+
     parser.add_argument('--sentry-dsn', metavar='dsn',
         default=Defaults.raven_dsn,
         help='Use specified sentry DSN to capture errors/logging using'
@@ -118,9 +128,10 @@ def main(args=None, defaults=None):
 
     global log
     import logging
+    log = '%(levelname)s :: %(message)s'
+    if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
     logging.basicConfig(
-        datefmt='%Y-%m-%d %H:%M:%S',
-        format='%(asctime)s :: %(levelname)s :: %(message)s',
+        format=log, datefmt='%Y-%m-%d %H:%M:%S',
         level=logging.DEBUG if opts.debug else logging.WARNING )
     log = logging.getLogger()
 
@@ -135,6 +146,34 @@ def main(args=None, defaults=None):
         map(os.path.expanduser, list(Defaults.conf_paths) + list(opts.conf or list()))
         + list(sys.argv[1:] if args is None else args) )
 
+    if opts.systemd:
+        from systemd import daemon
+        def sd_cycle(ts=None):
+            if not sd_cycle.ready:
+                daemon.notify('READY=1')
+                daemon.notify('STATUS=Running...')
+                sd_cycle.ready = True
+            if sd_cycle.delay:
+                if ts is None: ts = time.time()
+                delay = ts - sd_cycle.ts_next
+                if delay > 0: time.sleep(delay)
+                sd_cycle.ts_next += sd_cycle.delay
+            else: sd_cycle.ts_next = None
+            if sd_cycle.wdt: daemon.notify('WATCHDOG=1')
+        sd_cycle.ts_next = time.time()
+        wd_pid, wd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
+        if wd_pid and wd_pid.isdigit() and int(wd_pid) == os.getpid():
+            wd_interval = float(wd_usec) / 2e6 # half of interval in seconds
+            assert wd_interval > 0, wd_interval
+        else: wd_interval = None
+        if wd_interval:
+            log.debug('Initializing systemd watchdog pinger with interval: %ss', wd_interval)
+            sd_cycle.wdt, sd_cycle.delay = True, wd_interval
+        else: sd_cycle.wdt, sd_cycle.delay = False, None
+        sd_cycle.ready = False
+    else: sd_cycle = None
+    signal.signal(signal.SIGTERM, lambda sig,frm: sys.exit(0))
+
     try:
         log.debug('Initializing pjsua')
         lib = pj.Lib()
@@ -146,7 +185,7 @@ def main(args=None, defaults=None):
         lib.start()
 
         log.debug('Entering handle_calls_loop')
-        handle_calls_loop(lib, config)
+        handle_calls_loop(lib, config, sd_cycle)
     finally: lib.destroy()
 
     log.debug('Finished')
