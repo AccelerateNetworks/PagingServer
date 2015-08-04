@@ -14,7 +14,7 @@ import pjsua as pj
 class Defaults(object):
 
     conf_paths = 'paging.conf', '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf'
-    raven_dsn = ( 'https://0b915e29784f479f93db6ae2870515b6'
+    sentry_dsn = ( 'https://0b915e29784f479f93db6ae2870515b6'
         ':b2fb7becafdc4c259b813a8f84f5b855@sentry.finn.io/2' )
 
 
@@ -193,7 +193,7 @@ class PagingServer(object):
                     self.sd_cycle(ts)
                     continue
             if not self.lib: break
-            self.lib.handle_events(max_poll_delay * 1000) # timeout in ms!
+            self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
         log.debug('pjsua event loop has been stopped')
 
 
@@ -208,16 +208,15 @@ def main(args=None, defaults=None):
     parser.add_argument('conf', nargs='*',
         help='Extra config files to load on top of default ones.'
             ' Values in latter ones override those in the former.'
-            ' Initial files (always loaded, if exist): {}'.format(' '.join(Defaults.conf_paths)))
+            ' Initial files (always loaded, if exist): {}'.format(' '.join(defaults.conf_paths)))
 
     parser.add_argument('--systemd', action='store_true',
         help='Use systemd service'
             ' notification/watchdog mechanisms in daemon modes, if available.')
 
-    parser.add_argument('--sentry-dsn', metavar='dsn',
-        default=Defaults.raven_dsn,
-        help='Use specified sentry DSN to capture errors/logging using'
-            ' "raven" module. Enabled by default, empty or "none" - do not use. Default: %(default)s')
+    parser.add_argument('--sentry-dsn', nargs='?', metavar='dsn', const=True,
+        help='Use Sentry to capture errors/logging using "raven" module.'
+            ' If DSN is not specified, default one will be used: {}'.format(defaults.sentry_dsn))
 
     parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
     parser.add_argument('--pjsua-log-level',
@@ -234,9 +233,11 @@ def main(args=None, defaults=None):
         level=logging.DEBUG if opts.debug else logging.WARNING )
     log = logging.getLogger('main')
 
-    if opts.sentry_dsn.strip() not in ['none', '']:
+    if opts.sentry_dsn:
         global raven_client
         import raven
+        dsn = opts.sentry_dsn
+        if dsn is True: dsn = defaults.sentry_dsn
         raven_client = raven.Client(opts.sentry_dsn)
         # XXX: can be hooked-up into logging and/or sys.excepthook
 
@@ -245,7 +246,7 @@ def main(args=None, defaults=None):
     for p in conf_user_paths:
         if not os.access(p, os.O_RDONLY):
             parser.error('Specified config file does not exists: {}'.format(p))
-    config.read(list(Defaults.conf_paths) + conf_user_paths)
+    config.read(list(defaults.conf_paths) + conf_user_paths)
     server_opts = type('ServerOpts', (object,), dict(vars(opts)))
 
     if opts.systemd:
