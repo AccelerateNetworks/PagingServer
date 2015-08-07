@@ -1,11 +1,17 @@
 [Unit]
-Description=SIP client that autoanswers, perfect for a Paging system
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-user=dan
-Type=simple
-ExecStart=/usr/bin/python /opt/autoanswer.py
+Type=notify
+WatchdogSec=30
+Restart=always
+RestartSec=30
+StartLimitInterval=10min
+StartLimitBurst=10
+
+User=paging
+ExecStart=/opt/bin/paging.py --systemd
 
 [Install]
 WantedBy=multi-user.target
