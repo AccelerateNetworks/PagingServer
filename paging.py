@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
-import os
-import sys
+import itertools as it, operator as op, functools as ft
+from ConfigParser import SafeConfigParser
+from os.path import join, exists, expanduser
+import os, sys, types, time, signal, logging, inspect
+
 import pjsua as pj
-import ConfigParser
-import time
-import functools
-import signal
 
 
 class Defaults(object):
@@ -18,18 +17,54 @@ class Defaults(object):
         ':b2fb7becafdc4c259b813a8f84f5b855@sentry.finn.io/2' )
 
 
+### Utility boilerplates
+
 log = raven_client = None
 
-def err_report_wrapper(func):
-    @functools.wraps(func)
-    def _wrapper(*args, **kws):
-        try: return func(*args, **kws)
-        except Exception as e:
-            if raven_client: raven_client.captureException()
-            if func.func_name == '__init__': raise
-            if log: log.exception('ERROR (%s): %s', func.func_name, e)
-    return _wrapper
+def err_report_wrapper(func=None, fatal=None):
+    def _err_report_wrapper(func):
+        @ft.wraps(func)
+        def _wrapper(*args, **kws):
+            try: return func(*args, **kws)
+            except Exception as err:
+                if raven_client: raven_client.captureException()
+                if fatal is None and func.func_name == '__init__': raise # implicit
+                elif fatal: raise
+                if log: log.exception('ERROR (%s): %s', func.func_name, err)
+        return _wrapper
+    return _err_report_wrapper if func is None else _err_report_wrapper(func)
 
+err_report = err_report_wrapper
+err_report_only = err_report_wrapper(fatal=False)
+err_report_fatal = err_report_wrapper(fatal=True)
+
+def get_logger(logger=None, root=['__main__', 'paging']):
+    'Returns logger for calling class or function name and module path.'
+    if logger is None:
+        frame = inspect.stack()[1][0]
+        name = inspect.getargvalues(frame).locals.get('self')
+        if isinstance(root, types.StringTypes): root = [root]
+        if name:
+            name = '{}.{}'.format(name.__module__, name.__class__.__name__).split('.')
+            for k in root:
+                if k in name: break
+            else:
+                raise ValueError( 'Unable to find logger name'
+                    ' root(s) ({!r}) in module path: {!r}'.format(root, name) )
+            name = name[name.index(k):]
+            if k == '__main__': name[0] = root[-1]
+        else: name = root[-1:]
+        name_ext = frame.f_code.co_name
+        if name_ext not in ['__init__', '__new__']:
+            name.append(name_ext)
+            if name_ext[0].isupper(): name.append('core')
+        logger = '.'.join(name)
+    if isinstance(logger, types.StringTypes):
+        logger = logging.getLogger(logger)
+    return logger
+
+
+### PJSUA handlers
 
 class AccountCallback(pj.AccountCallback):
 
@@ -37,6 +72,7 @@ class AccountCallback(pj.AccountCallback):
     def __init__(self, account=None):
         pj.AccountCallback.__init__(self, account)
         self.totalcalls = 0
+        self.log = get_logger()
 
     @err_report_wrapper
     def on_incoming_call(self, call):
@@ -54,13 +90,11 @@ class AccountCallback(pj.AccountCallback):
 
 class CallCallback(pj.CallCallback):
 
-    call = None
-
     @err_report_wrapper
     def __init__(self, call=None, number=0):
-        self.call = call
-        self.number = number
         pj.CallCallback.__init__(self, call)
+        self.call, self.number = call, number
+        self.log = get_logger()
 
     @err_report_wrapper
     def on_state(self):
@@ -86,21 +120,63 @@ class CallCallback(pj.CallCallback):
             log.debug('Media is inactive')
 
 
-@err_report_wrapper
-def handle_calls_loop(lib, config, sd_cycle):
-    acc = lib.create_account(pj.AccountConfig(
-        config.get('sip', 'domain'),
-        config.get('sip', 'user'),
-        config.get('sip', 'pass')
-    ), cb=AccountCallback())
 
-    ts_next = time.time()
-    while True:
+### Server
+
+class PagingServer(object):
+
+    lib = None
+
+    @err_report_wrapper
+    def __init__(self, config, sd_cycle=None):
+        self.config, self.sd_cycle = config, sd_cycle
+        self.log = get_logger()
+
+    @err_report_fatal
+    def init(self):
+        self.log.debug('pjsua init')
+        self.lib = lib = pj.Lib()
+        ua = pj.UAConfig()
+        ua.max_calls = 10
+        ua.user_agent = 'PagingServer/git (+https://github.com/AccelerateNetworks/PagingServer)'
+        lib.init(ua) # XXX: logging config, media config
+        transport = lib.create_transport(pj.TransportType.UDP)
+        lib.start(with_thread=False)
+
+    @err_report_fatal
+    def destroy(self):
+        if not self.lib: return
+        self.log.debug('pjsua cleanup')
+        self.lib.destroy()
+        self.lib = None
+
+    def __enter__(self):
+        self.init()
+        return self
+    def __exit__(self, *err): self.destroy()
+    def __del__(self): self.destroy()
+
+    @err_report_fatal
+    def run(self):
+        assert self.lib, 'Must be initialized before run()'
+
+        acc_config = pj.AccountConfig(
+            *map(ft.partial(self.config.get, 'sip'), ['domain', 'user', 'pass']) )
+        acc = self.lib.create_account(acc_config, cb=AccountCallback())
+
+        log.debug('pjsua event loop started')
         while True:
-            if not sd_cycle or not sd_cycle.ts_next: break
-            sd_cycle()
-        try: time.sleep(3600)
-        except KeyboardInterrupt: break
+            if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 1
+            else:
+                ts = time.time()
+                max_poll_delay = self.sd_cycle.ts_next - ts
+                if max_poll_delay <= 0:
+                    self.sd_cycle(ts)
+                    continue
+            if not self.lib: break
+            self.lib.handle_events(max_poll_delay * 1000) # timeout in ms!
+        log.debug('pjsua event loop has been stopped')
+
 
 
 def main(args=None, defaults=None):
@@ -127,13 +203,12 @@ def main(args=None, defaults=None):
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
     global log
-    import logging
-    log = '%(levelname)s :: %(message)s'
+    log = '%(name)s %(levelname)s :: %(message)s'
     if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
     logging.basicConfig(
         format=log, datefmt='%Y-%m-%d %H:%M:%S',
         level=logging.DEBUG if opts.debug else logging.WARNING )
-    log = logging.getLogger()
+    log = logging.getLogger('main')
 
     if opts.sentry_dsn.strip() not in ['none', '']:
         global raven_client
@@ -141,10 +216,12 @@ def main(args=None, defaults=None):
         raven_client = raven.Client(opts.sentry_dsn)
         # XXX: can be hooked-up into logging and/or sys.excepthook
 
-    config = ConfigParser.SafeConfigParser()
-    config.read(
-        map(os.path.expanduser, list(Defaults.conf_paths) + list(opts.conf or list()))
-        + list(sys.argv[1:] if args is None else args) )
+    config = SafeConfigParser()
+    conf_user_paths = map(expanduser, opts.conf or list())
+    for p in conf_user_paths:
+        if not os.access(p, os.O_RDONLY):
+            parser.error('Specified config file does not exists: {}'.format(p))
+    config.read(list(Defaults.conf_paths) + conf_user_paths)
 
     if opts.systemd:
         from systemd import daemon
@@ -172,22 +249,12 @@ def main(args=None, defaults=None):
         else: sd_cycle.wdt, sd_cycle.delay = False, None
         sd_cycle.ready = False
     else: sd_cycle = None
-    signal.signal(signal.SIGTERM, lambda sig,frm: sys.exit(0))
 
-    try:
-        log.debug('Initializing pjsua')
-        lib = pj.Lib()
-        ua = pj.UAConfig()
-        ua.max_calls = 10
-        ua.user_agent = 'PagingServer/git (+https://github.com/AccelerateNetworks/PagingServer)'
-        lib.init(ua)
-        transport = lib.create_transport(pj.TransportType.UDP)
-        lib.start()
-
-        log.debug('Entering handle_calls_loop')
-        handle_calls_loop(lib, config, sd_cycle)
-    finally: lib.destroy()
-
-    log.debug('Finished')
+    log.info('Starting PagingServer...')
+    with PagingServer(config, sd_cycle) as server:
+        for sig in signal.SIGINT, signal.SIGTERM:
+            signal.signal(sig, lambda sig,frm: server.destroy())
+        server.run()
+    log.info('Finished')
 
 if __name__ == '__main__': sys.exit(main())
