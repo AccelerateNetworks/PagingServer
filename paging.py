@@ -145,8 +145,10 @@ class PagingServer(object):
     def init(self):
         self.log.debug('pjsua init')
 
-        with suppress_fd(1):
-            self.lib = lib = pj.Lib()
+        # Before logging is configured, pjsua prints some init info to plain stderr fd
+        # Unless there's a good reason to see this, like debugging early crashes,
+        #  there should be no need to have this exception, hence the suppress_fd(1) hack
+        with suppress_fd(1): self.lib = lib = pj.Lib()
 
         conf_ua = pj.UAConfig()
         conf_ua.max_calls = 10
