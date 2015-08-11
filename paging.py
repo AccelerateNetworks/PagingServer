@@ -324,6 +324,5 @@ def main(args=None, defaults=None):
             signal.signal(sig, lambda sig,frm: server.destroy())
         server.run()
     log.info('Finished')
-    os._exit(0) # XXX: to prevent weird pjsua re-init (on gc?)
 
 if __name__ == '__main__': sys.exit(main())
