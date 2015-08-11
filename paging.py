@@ -132,13 +132,23 @@ class CallCallback(pj.CallCallback):
 
 ### Server
 
+class PJSUAOpts(object):
+
+    log_level = 0
+
+    def __init__(self, **opts):
+        for k, v in opts.viewitems():
+            if not hasattr(self, k): raise KeyError(k)
+            setattr(self, k, v)
+
 class PagingServer(object):
 
     lib = None
 
     @err_report_wrapper
-    def __init__(self, opts, config, sd_cycle=None):
-        self.opts, self.config, self.sd_cycle = opts, config, sd_cycle
+    def __init__(self, config, pjsua_opts=None, sd_cycle=None):
+        self.config, self.sd_cycle = config, sd_cycle
+        self.pjsua_opts = pjsua_opts or PJSUAOpts()
         self.log = get_logger()
 
     @err_report_fatal
@@ -157,7 +167,7 @@ class PagingServer(object):
 
         conf_log = lambda level,msg,n,\
             log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
-        conf_log = pj.LogConfig(level=self.opts.pjsua_log_level, callback=conf_log)
+        conf_log = pj.LogConfig(level=self.pjsua_opts.log_level, callback=conf_log)
 
         lib.init(conf_ua, conf_log) # XXX: media config
 
@@ -225,6 +235,7 @@ def main(args=None, defaults=None):
         metavar='0-10', type=int, default=0,
         help='pjsua lib logging level. Only used when --debug is enabled.'
             ' Zero is only for fatal errors, higher levels are more noisy. Default: %(default)s')
+
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
     global log
@@ -249,7 +260,7 @@ def main(args=None, defaults=None):
         if not os.access(p, os.O_RDONLY):
             parser.error('Specified config file does not exists: {}'.format(p))
     config.read(list(defaults.conf_paths) + conf_user_paths)
-    server_opts = type('ServerOpts', (object,), dict(vars(opts)))
+    pjsua_opts = PJSUAOpts(log_level=opts.pjsua_log_level)
 
     if opts.systemd:
         from systemd import daemon
@@ -279,7 +290,7 @@ def main(args=None, defaults=None):
     else: sd_cycle = None
 
     log.info('Starting PagingServer...')
-    with PagingServer(server_opts, config, sd_cycle) as server:
+    with PagingServer(config, pjsua_opts, sd_cycle) as server:
         for sig in signal.SIGINT, signal.SIGTERM:
             signal.signal(sig, lambda sig,frm: server.destroy())
         server.run()
