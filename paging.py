@@ -3,9 +3,9 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from ConfigParser import SafeConfigParser
-from os.path import join, exists, expanduser
+from os.path import join, exists, isfile, expanduser
 import os, sys, types, time, signal, logging, inspect
 
 import pjsua as pj
@@ -84,8 +84,13 @@ def dict_with(d, **kws):
     d.update(kws)
     return d
 
+def dict_for_ctype(obj):
+    return dict((k, getattr(obj, k)) for k in dir(obj) if not k.startswith('_'))
+
 
 ### PJSUA handlers
+
+# XXX: both are BROKEN, need to figure out hw audio output first
 
 class AccountCallback(pj.AccountCallback):
 
@@ -107,7 +112,6 @@ class AccountCallback(pj.AccountCallback):
             time.sleep(config.getint('pa', 'filetime'))
             pj.Lib.instance().player_destroy(wav_player_id)
         call.answer(200)
-
 
 class CallCallback(pj.CallCallback):
 
@@ -143,6 +147,8 @@ class CallCallback(pj.CallCallback):
 
 
 ### Server
+
+class PagingServerError(Exception): pass
 
 class PJSUAOpts(object):
 
@@ -185,6 +191,14 @@ class PagingServer(object):
 
         transport = lib.create_transport(pj.TransportType.UDP)
         lib.start(with_thread=False)
+        lib.c = pj._pjsua
+
+        ports = lib.c.enum_conf_ports()
+        if len(ports) != 1:
+            raise PagingServerError(
+                'Failed to pick sound card output conference'
+                    ' port after pjsua init (ports found: {}).'.format(len(ports)) )
+        self.out_port_id, = ports
 
     @err_report_fatal
     def destroy(self):
@@ -225,6 +239,33 @@ class PagingServer(object):
             for n, dev in enumerate(self.lib.enum_snd_dev()) )
 
 
+    @contextmanager
+    def wav_play(self, path, loop=False, connect_to_out=True):
+        # Currently there (still!) doesn't seem to be any callback for player EOF:
+        # http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
+        player_id = self.lib.create_player(path, loop=loop)
+        try:
+            player_port = self.lib.player_get_slot(player_id)
+            if connect_to_out: self.lib.conf_connect(player_port, self.out_port_id)
+            yield player_port
+        finally: self.lib.player_destroy(player_id)
+
+    def wav_length(self, path, force_file=True):
+        # Only useful to stop playback in a hacky ad-hoc way,
+        #  because pjsua python lib doesn't export proper callback,
+        #  and ctypes wrapper would be even uglier
+        import wave
+        if force_file and not isfile(path): # missing, fifo, etc
+            raise PagingServerError(path)
+        with closing(wave.open(path, 'r')) as src:
+            return src.getnframes() / float(src.getframerate())
+
+    def wav_play_sync(self, path, ts_diff_pad=1.0):
+        ts_diff = self.wav_length(path)
+        with self.wav_play(path) as player_port:
+            self.log.debug('Started blocking playback of wav with length: %s', ts_diff)
+            time.sleep(ts_diff + ts_diff_pad)
+
 
 def main(args=None, defaults=None):
     defaults = defaults or Defaults()
@@ -251,8 +292,11 @@ def main(args=None, defaults=None):
         metavar='0-10', type=int, default=0,
         help='pjsua lib logging level. Only used when --debug is enabled.'
             ' Zero is only for fatal errors, higher levels are more noisy. Default: %(default)s')
+
     parser.add_argument('--dump-sound-devices', action='store_true',
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
+    parser.add_argument('--test-audio-file', metavar='path',
+        help='Play specified wav file and exit.')
 
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -263,6 +307,9 @@ def main(args=None, defaults=None):
         format=log, datefmt='%Y-%m-%d %H:%M:%S',
         level=logging.DEBUG if opts.debug else logging.WARNING )
     log = logging.getLogger('main')
+    if opts.debug:
+        for k in 'stdout', 'stderr':
+            setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
 
     if opts.sentry_dsn:
         global raven_client
@@ -316,6 +363,11 @@ def main(args=None, defaults=None):
                 for k, v in sorted(dev.viewitems()):
                     if k in ['id', 'name']: continue
                     print('  {}: {}'.format(k, v))
+        return
+
+    if opts.test_audio_file:
+        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+            server.wav_play_sync(opts.test_audio_file)
         return
 
     log.info('Starting PagingServer...')
