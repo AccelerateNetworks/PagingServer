@@ -4,18 +4,39 @@ from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager, closing
-from ConfigParser import SafeConfigParser
+import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser
 import os, sys, types, time, signal, logging, inspect
 
 import pjsua as pj
 
 
-class Defaults(object):
+class Conf(object):
 
-    conf_paths = 'paging.conf', '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf'
-    sentry_dsn = ( 'https://0b915e29784f479f93db6ae2870515b6'
-        ':b2fb7becafdc4c259b813a8f84f5b855@sentry.finn.io/2' )
+    sip_domain = ''
+    sip_user = ''
+    sip_pass = ''
+
+    samples_klaxon = ''
+
+    server_debug = False
+    server_pjsua_log_level = 0
+    server_sentry_dsn = ''
+
+    _conf_paths = ( 'paging.conf',
+        '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf' )
+    _conf_sections = 'sip', 'samples', 'server'
+
+    def __repr__(self): return repr(vars(self))
+    def get(self, *k): return getattr(self, '_'.join(k))
+
+    @staticmethod
+    def parse_bool(val, _states={
+            '1': True, 'yes': True, 'true': True, 'on': True,
+            '0': False, 'no': False, 'false': False, 'off': False }):
+        try: return _states[val.lower()]
+        except KeyError: raise ValueError(val)
+
 
 
 ### Utility boilerplates
@@ -81,6 +102,44 @@ def suppress_streams(*streams):
             if stream_base is not stream: stream_base.flush()
             os.dup2(fd_bak, fd)
             setattr(sys, k, stream)
+
+def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
+    if isinstance(bytes_or_unicode, bytes): return bytes_or_unicode
+    return bytes_or_unicode.encode(encoding, errors)
+
+def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
+    if isinstance(bytes_or_unicode, unicode): return bytes_or_unicode
+    return bytes_or_unicode.decode(encoding, errors)
+
+def force_str_type(bytes_or_unicode, val_or_type, **conv_kws):
+    if val_or_type is bytes or isinstance(val_or_type, bytes): f = force_bytes
+    elif val_or_type is unicode or isinstance(val_or_type, unicode): f = force_unicode
+    else: raise TypeError(val_or_type)
+    return f(bytes_or_unicode, **conv_kws)
+
+def update_conf_from_file(conf, path_or_file, section='default', prefix=None):
+    if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
+    if isinstance(path_or_file, configparser.RawConfigParser): config = path_or_file
+    else:
+        with path_or_file as src:
+            config = configparser.RawConfigParser(allow_no_value=True)
+            config.readfp(src)
+    for k in dir(conf):
+        if prefix:
+            if not k.startswith(prefix): continue
+            conf_k, k = k, k[len(prefix):]
+        elif k.startswith('_'): continue
+        else: conf_k = k
+        v = getattr(conf, conf_k)
+        if isinstance(v, types.StringTypes):
+            get_val = lambda *a: force_str_type(config.get(*a), v)
+        elif isinstance(v, bool): get_val = config.getboolean
+        elif isinstance(v, (int, long)): get_val = config.getint
+        elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
+        else: continue # values with other types cannot be specified in config
+        for k_conf in k, k.replace('_', '-'):
+            try: setattr(conf, conf_k, get_val(section, k_conf))
+            except configparser.Error: pass
 
 def dict_with(d, **kws):
     d.update(kws)
@@ -152,23 +211,13 @@ class CallCallback(pj.CallCallback):
 
 class PagingServerError(Exception): pass
 
-class PJSUAOpts(object):
-
-    log_level = 0
-
-    def __init__(self, **opts):
-        for k, v in opts.viewitems():
-            if not hasattr(self, k): raise KeyError(k)
-            setattr(self, k, v)
-
 class PagingServer(object):
 
     lib = None
 
     @err_report_wrapper
-    def __init__(self, config, pjsua_opts=None, sd_cycle=None):
-        self.config, self.sd_cycle = config, sd_cycle
-        self.pjsua_opts = pjsua_opts or PJSUAOpts()
+    def __init__(self, conf, sd_cycle=None):
+        self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
 
     @err_report_fatal
@@ -187,7 +236,7 @@ class PagingServer(object):
 
         conf_log = lambda level,msg,n,\
             log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
-        conf_log = pj.LogConfig(level=self.pjsua_opts.log_level, callback=conf_log)
+        conf_log = pj.LogConfig(level=self.conf.server_pjsua_log_level, callback=conf_log)
 
         lib.init(conf_ua, conf_log) # XXX: media config
 
@@ -220,7 +269,7 @@ class PagingServer(object):
         assert self.lib, 'Must be initialized before run()'
 
         acc_config = pj.AccountConfig(
-            *map(ft.partial(self.config.get, 'sip'), ['domain', 'user', 'pass']) )
+            *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) )
         acc = self.lib.create_account(acc_config, cb=AccountCallback())
 
         log.debug('pjsua event loop started')
@@ -284,7 +333,7 @@ def pprint_infos(infos, title=None):
             print('  {}: {}'.format(k, v))
 
 def main(args=None, defaults=None):
-    defaults = defaults or Defaults()
+    defaults = defaults or Conf()
 
     import argparse
     parser = argparse.ArgumentParser(
@@ -292,22 +341,23 @@ def main(args=None, defaults=None):
 
     parser.add_argument('conf', nargs='*',
         help='Extra config files to load on top of default ones.'
-            ' Values in latter ones override those in the former.'
-            ' Initial files (always loaded, if exist): {}'.format(' '.join(defaults.conf_paths)))
+            ' Values in latter ones override those in the former, cli values override all.'
+            ' Initial files (always loaded, if exist): {}'.format(' '.join(defaults._conf_paths)))
 
     parser.add_argument('--systemd', action='store_true',
         help='Use systemd service'
             ' notification/watchdog mechanisms in daemon modes, if available.')
 
-    parser.add_argument('--sentry-dsn', nargs='?', metavar='dsn', const=True,
-        help='Use Sentry to capture errors/logging using "raven" module.'
-            ' If DSN is not specified, default one will be used: {}'.format(defaults.sentry_dsn))
-
-    parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+    parser.add_argument('-d', '--debug',
+        action='store_true', help='Verbose operation mode.')
     parser.add_argument('--pjsua-log-level',
-        metavar='0-10', type=int, default=0,
+        metavar='0-10', type=int,
         help='pjsua lib logging level. Only used when --debug is enabled.'
-            ' Zero is only for fatal errors, higher levels are more noisy. Default: %(default)s')
+            ' Zero is only for fatal errors, higher levels are more noisy.'
+            ' Default: {}'.format(defaults.server_pjsua_log_level))
+    parser.add_argument('--sentry-dsn', metavar='dsn',
+        help='Use Sentry to capture errors/logging using "raven" module.'
+            ' Default: {}'.format(defaults.server_sentry_dsn))
 
     parser.add_argument('--dump-sound-devices', action='store_true',
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
@@ -329,21 +379,26 @@ def main(args=None, defaults=None):
         for k in 'stdout', 'stderr':
             setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
 
-    if opts.sentry_dsn:
-        global raven_client
-        import raven
-        dsn = opts.sentry_dsn
-        if dsn is True: dsn = defaults.sentry_dsn
-        raven_client = raven.Client(opts.sentry_dsn)
-        # XXX: can be hooked-up into logging and/or sys.excepthook
-
-    config = SafeConfigParser()
+    conf_file = configparser.SafeConfigParser(allow_no_value=True)
     conf_user_paths = map(expanduser, opts.conf or list())
     for p in conf_user_paths:
         if not os.access(p, os.O_RDONLY):
             parser.error('Specified config file does not exists: {}'.format(p))
-    config.read(list(defaults.conf_paths) + conf_user_paths)
-    pjsua_opts = PJSUAOpts(log_level=opts.pjsua_log_level)
+    conf_file.read(list(defaults._conf_paths) + conf_user_paths)
+
+    conf = Conf()
+    for k in conf._conf_sections:
+        update_conf_from_file(conf, conf_file, section=k, prefix='{}_'.format(k))
+    for k in 'debug', 'pjsua_log_level', 'sentry_dsn':
+        v = getattr(opts, k)
+        if v is not None: setattr(conf, 'server_{}'.format(k), v)
+
+    if conf.server_sentry_dsn:
+        global raven_client
+        import raven
+        dsn = conf.server_sentry_dsn
+        raven_client = raven.Client(conf.server_sentry_dsn)
+        # XXX: can be hooked-up into logging and/or sys.excepthook
 
     if opts.systemd:
         from systemd import daemon
@@ -372,25 +427,27 @@ def main(args=None, defaults=None):
         sd_cycle.ready = False
     else: sd_cycle = None
 
+    server_ctx = PagingServer(conf, sd_cycle)
+
     if opts.dump_sound_devices:
-        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+        with server_ctx as server:
             devs = server.list_sound_devices()
             pprint_infos(devs, 'Detected sound devices')
         return
 
     if opts.dump_conf_ports:
-        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+        with server_ctx as server:
             ports = server.list_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
         return
 
     if opts.test_audio_file:
-        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+        with server_ctx as server:
             server.wav_play_sync(opts.test_audio_file)
         return
 
     log.info('Starting PagingServer...')
-    with PagingServer(config, pjsua_opts, sd_cycle) as server:
+    with server_ctx as server:
         for sig in signal.SIGINT, signal.SIGTERM:
             signal.signal(sig, lambda sig,frm: server.destroy())
         server.run()
