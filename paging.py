@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager, closing
 import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser
-import os, sys, types, time, signal, logging, inspect
+import os, sys, re, types, time, signal, logging, inspect
 
 import pjsua as pj
 
@@ -17,7 +17,9 @@ class Conf(object):
     sip_user = ''
     sip_pass = ''
 
-    samples_klaxon = ''
+    audio_klaxon = ''
+    audio_output_port = ''
+    audio_output_port_id = -1
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -25,7 +27,7 @@ class Conf(object):
 
     _conf_paths = ( 'paging.conf',
         '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf' )
-    _conf_sections = 'sip', 'samples', 'server'
+    _conf_sections = 'sip', 'audio', 'server'
 
     def __repr__(self): return repr(vars(self))
     def get(self, *k): return getattr(self, '_'.join(k))
@@ -244,13 +246,6 @@ class PagingServer(object):
         lib.start(with_thread=False)
         lib.c = pj._pjsua
 
-        ports = lib.c.enum_conf_ports()
-        if len(ports) != 1:
-            raise PagingServerError(
-                'Failed to pick sound card output conference'
-                    ' port after pjsua init (ports found: {}).'.format(len(ports)) )
-        self.out_port_id, = ports
-
     @err_report_fatal
     def destroy(self):
         if not self.lib: return
@@ -264,9 +259,27 @@ class PagingServer(object):
     def __exit__(self, *err): self.destroy()
     def __del__(self): self.destroy()
 
+    def out_port_init(self):
+        ports = self.list_conf_ports()
+        if self.conf.audio_output_port_id != -1:
+            try: ports = [ports[self.conf.audio_output_port_id]]
+            except IndexError: ports = list()
+        else:
+            port_match = re.compile(self.conf.audio_output_port)
+            ports, ports_pool = list(), ports
+            for port in ports_pool:
+                if port_match.search(port['name']): ports.append(port)
+        if len(ports) != 1:
+            raise PagingServerError(
+                'Failed to pick sound card output conference'
+                    ' port after pjsua init (ports matched: {}).'.format(len(ports)) )
+        self.out_port_id, = map(op.itemgetter('id'), ports)
+
     @err_report_fatal
     def run(self):
         assert self.lib, 'Must be initialized before run()'
+
+        self.out_port_init()
 
         acc_config = pj.AccountConfig(
             *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) )
@@ -322,6 +335,7 @@ class PagingServer(object):
         with self.wav_play(path) as player_port:
             self.log.debug('Started blocking playback of wav with length: %s', ts_diff)
             time.sleep(ts_diff + ts_diff_pad)
+
 
 
 def pprint_infos(infos, title=None):
