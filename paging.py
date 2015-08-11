@@ -65,12 +65,20 @@ def get_logger(logger=None, root=['__main__', 'paging']):
     return logger
 
 @contextmanager
-def suppress_fd(fd):
-    with open(os.devnull, 'wb') as file_null:
-        fd_bak, fd_null = os.dup(fd), file_null.fileno()
-        os.dup2(fd_null, fd)
+def suppress_streams(*streams):
+    with open(os.devnull, 'wb') as stream_null:
+        fd_null, replaced = stream_null.fileno(), dict()
+        for k in streams or ['stdout', 'stderr']:
+            stream = getattr(sys, k)
+            fd = stream.fileno()
+            replaced[k] = fd, os.dup(fd), stream
+            os.dup2(fd_null, fd)
+            setattr(sys, k, stream_null)
         yield
-        os.dup2(fd_bak, fd)
+        for k, (fd, fd_bak, stream) in replaced.viewitems():
+            stream.flush()
+            os.dup2(fd_bak, fd)
+            setattr(sys, k, stream)
 
 
 ### PJSUA handlers
@@ -157,8 +165,8 @@ class PagingServer(object):
 
         # Before logging is configured, pjsua prints some init info to plain stderr fd
         # Unless there's a good reason to see this, like debugging early crashes,
-        #  there should be no need to have this exception, hence the suppress_fd(1) hack
-        with suppress_fd(1): self.lib = lib = pj.Lib()
+        #  there should be no need to have this exception, hence the "suppress" hack
+        with suppress_streams('stdout'): self.lib = lib = pj.Lib()
 
         conf_ua = pj.UAConfig()
         conf_ua.max_calls = 10
