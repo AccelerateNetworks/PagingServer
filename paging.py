@@ -80,6 +80,10 @@ def suppress_streams(*streams):
             os.dup2(fd_bak, fd)
             setattr(sys, k, stream)
 
+def dict_with(d, **kws):
+    d.update(kws)
+    return d
+
 
 ### PJSUA handlers
 
@@ -216,6 +220,10 @@ class PagingServer(object):
             self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
         log.debug('pjsua event loop has been stopped')
 
+    def list_sound_devices(self):
+        return list( dict_with(vars(dev), id=n)
+            for n, dev in enumerate(self.lib.enum_snd_dev()) )
+
 
 
 def main(args=None, defaults=None):
@@ -243,6 +251,8 @@ def main(args=None, defaults=None):
         metavar='0-10', type=int, default=0,
         help='pjsua lib logging level. Only used when --debug is enabled.'
             ' Zero is only for fatal errors, higher levels are more noisy. Default: %(default)s')
+    parser.add_argument('--dump-sound-devices', action='store_true',
+        help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
 
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -296,6 +306,17 @@ def main(args=None, defaults=None):
         else: sd_cycle.wdt, sd_cycle.delay = False, None
         sd_cycle.ready = False
     else: sd_cycle = None
+
+    if opts.dump_sound_devices:
+        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+            devs = server.list_sound_devices()
+            print('Detected sound devices:')
+            for dev in devs:
+                print('[{0[id]}] {0[name]}'.format(dev))
+                for k, v in sorted(dev.viewitems()):
+                    if k in ['id', 'name']: continue
+                    print('  {}: {}'.format(k, v))
+        return
 
     log.info('Starting PagingServer...')
     with PagingServer(config, pjsua_opts, sd_cycle) as server:
