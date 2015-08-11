@@ -77,6 +77,8 @@ def suppress_streams(*streams):
         yield
         for k, (fd, fd_bak, stream) in replaced.viewitems():
             stream.flush()
+            stream_base = getattr(sys, '__{}__'.format(k))
+            if stream_base is not stream: stream_base.flush()
             os.dup2(fd_bak, fd)
             setattr(sys, k, stream)
 
@@ -234,6 +236,12 @@ class PagingServer(object):
             self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
         log.debug('pjsua event loop has been stopped')
 
+
+    def list_conf_ports(self):
+        return list(
+            dict_with(dict_for_ctype(self.lib.c.conf_get_port_info(port_id)), id=n)
+            for n, port_id in enumerate(self.lib.c.enum_conf_ports()) )
+
     def list_sound_devices(self):
         return list( dict_with(vars(dev), id=n)
             for n, dev in enumerate(self.lib.enum_snd_dev()) )
@@ -267,6 +275,14 @@ class PagingServer(object):
             time.sleep(ts_diff + ts_diff_pad)
 
 
+def pprint_infos(infos, title=None):
+    if title: print('{}:'.format(title))
+    for info in infos:
+        print('[{0[id]}] {0[name]}'.format(info))
+        for k, v in sorted(info.viewitems()):
+            if k in ['id', 'name']: continue
+            print('  {}: {}'.format(k, v))
+
 def main(args=None, defaults=None):
     defaults = defaults or Defaults()
 
@@ -295,6 +311,8 @@ def main(args=None, defaults=None):
 
     parser.add_argument('--dump-sound-devices', action='store_true',
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
+    parser.add_argument('--dump-conf-ports', action='store_true',
+        help='Dump the list of conference ports that pjsua creates after init and exit.')
     parser.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file and exit.')
 
@@ -357,12 +375,13 @@ def main(args=None, defaults=None):
     if opts.dump_sound_devices:
         with PagingServer(config, pjsua_opts, sd_cycle) as server:
             devs = server.list_sound_devices()
-            print('Detected sound devices:')
-            for dev in devs:
-                print('[{0[id]}] {0[name]}'.format(dev))
-                for k, v in sorted(dev.viewitems()):
-                    if k in ['id', 'name']: continue
-                    print('  {}: {}'.format(k, v))
+            pprint_infos(devs, 'Detected sound devices')
+        return
+
+    if opts.dump_conf_ports:
+        with PagingServer(config, pjsua_opts, sd_cycle) as server:
+            ports = server.list_conf_ports()
+            pprint_infos(ports, 'Detected conference ports')
         return
 
     if opts.test_audio_file:
