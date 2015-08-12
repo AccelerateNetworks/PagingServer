@@ -18,8 +18,8 @@ class Conf(object):
     sip_pass = ''
 
     audio_klaxon = ''
+    audio_output_device = '0'
     audio_output_port = ''
-    audio_output_port_id = -1
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -212,10 +212,11 @@ class CallCallback(pj.CallCallback):
 ### Server
 
 class PagingServerError(Exception): pass
+class PSConfigurationError(PagingServerError): pass
 
 class PagingServer(object):
 
-    lib = None
+    lib = out_dev_id = out_port_id = None
 
     @err_report_wrapper
     def __init__(self, conf, sd_cycle=None):
@@ -259,27 +260,42 @@ class PagingServer(object):
     def __exit__(self, *err): self.destroy()
     def __del__(self): self.destroy()
 
-    def out_port_init(self):
-        ports = self.list_conf_ports()
-        if self.conf.audio_output_port_id != -1:
-            try: ports = [ports[self.conf.audio_output_port_id]]
-            except IndexError: ports = list()
+    def match_info(self, infos, spec, kind):
+        if spec.isdigit():
+            try: infos = [infos[int(spec)]]
+            except KeyError:
+                self.log.error( 'Failed to find %s with id=%s,'
+                    ' available: %s', kind, spec, ', '.join(map(bytes, infos.keys())) )
+                infos = list()
         else:
-            port_match = re.compile(self.conf.audio_output_port)
-            ports, ports_pool = list(), ports
-            for port in ports_pool:
-                if port_match.search(port['name']): ports.append(port)
-        if len(ports) != 1:
-            raise PagingServerError(
-                'Failed to pick sound card output conference'
-                    ' port after pjsua init (ports matched: {}).'.format(len(ports)) )
-        self.out_port_id, = map(op.itemgetter('id'), ports)
+            info_match = re.compile(spec)
+            infos, infos_pool = list(), infos.values()
+            for info in infos_pool:
+                if info_match.search(info['name']): infos.append(info)
+        if len(infos) != 1:
+            raise PSConfigurationError(
+                'Failed to pick matching {} after pjsua init (spec: {!r}, matched count: {})'\
+                .format(kind, spec, len(infos)) )
+        return infos[0]
+
+    def init_outputs(self):
+        if self.out_dev_id is None:
+            m, spec = self.get_sound_devices(), self.conf.audio_output_port
+            m = self.match_info(m, spec, 'output device')
+            self.out_dev_id = m['id']
+            log.debug('Using output device: %s [%s]', m['name'], self.out_dev_id)
+            self.lib.set_snd_dev(-1, self.out_dev_id)
+
+        if self.out_port_id is None:
+            m, spec = self.get_conf_ports(), self.conf.audio_output_port
+            m = self.match_info(m, spec, 'conference output port')
+            self.out_port_id = m['id']
+            log.debug('Using output port: %s [%s]', m['name'], self.out_port_id)
 
     @err_report_fatal
     def run(self):
         assert self.lib, 'Must be initialized before run()'
-
-        self.out_port_init()
+        self.init_outputs()
 
         acc_config = pj.AccountConfig(
             *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) )
@@ -299,13 +315,13 @@ class PagingServer(object):
         log.debug('pjsua event loop has been stopped')
 
 
-    def list_conf_ports(self):
-        return list(
-            dict_with(dict_for_ctype(self.lib.c.conf_get_port_info(port_id)), id=n)
+    def get_conf_ports(self):
+        return dict(
+            (n, dict_with(dict_for_ctype(self.lib.c.conf_get_port_info(port_id)), id=n))
             for n, port_id in enumerate(self.lib.c.enum_conf_ports()) )
 
-    def list_sound_devices(self):
-        return list( dict_with(vars(dev), id=n)
+    def get_sound_devices(self):
+        return dict( (n, dict_with(vars(dev), id=n))
             for n, dev in enumerate(self.lib.enum_snd_dev()) )
 
 
@@ -333,18 +349,22 @@ class PagingServer(object):
     def wav_play_sync(self, path, ts_diff_pad=1.0):
         ts_diff = self.wav_length(path)
         with self.wav_play(path) as player_port:
-            self.log.debug('Started blocking playback of wav with length: %s', ts_diff)
+            self.log.debug('Started blocking playback of wav with length: %.1fs', ts_diff)
             time.sleep(ts_diff + ts_diff_pad)
 
 
 
-def pprint_infos(infos, title=None):
-    if title: print('{}:'.format(title))
+def pprint_infos(infos, title=None, pre=None):
+    if title:
+        print('{}:'.format(title))
+        if pre is None: pre = ' '*2
+    pre = pre or ''
+    if isinstance(infos, dict): infos = infos.values()
     for info in infos:
-        print('[{0[id]}] {0[name]}'.format(info))
+        print('{0}[{1[id]}] {1[name]}'.format(pre, info))
         for k, v in sorted(info.viewitems()):
             if k in ['id', 'name']: continue
-            print('  {}: {}'.format(k, v))
+            print('{}  {}: {}'.format(pre, k, v))
 
 def main(args=None, defaults=None):
     defaults = defaults or Conf()
@@ -445,18 +465,19 @@ def main(args=None, defaults=None):
 
     if opts.dump_sound_devices:
         with server_ctx as server:
-            devs = server.list_sound_devices()
+            devs = server.get_sound_devices()
             pprint_infos(devs, 'Detected sound devices')
         return
 
     if opts.dump_conf_ports:
         with server_ctx as server:
-            ports = server.list_conf_ports()
+            ports = server.get_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
         return
 
     if opts.test_audio_file:
         with server_ctx as server:
+            server.init_outputs()
             server.wav_play_sync(opts.test_audio_file)
         return
 
