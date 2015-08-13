@@ -133,14 +133,57 @@ Overview of the software stack related to audio flow:
 
 Hence audio configuration can be roughly divided into these sections (at the moment):
 
+
 * Sound output settings for PJSUA.
 
   Related configuration options:
 
-  * output-device
-  * output-port
+  * pjsua-device
+  * pjsua-conf-port
 
-* JACK daemon startup and control client configuration.
+  As PortAudio (used by pjsua) can use one (and only one) of multiple backends
+  at a time, and each of these backend can have multiple "ports" in turn,
+  ``pjsua-device`` should be configured to use JACK backend "device".
+
+  To see all devices that PJSUA and PortAudio detects, run::
+
+    % paging --dump-pjsua-devices
+
+    Detected sound devices:
+      [0] HDA ATI SB: ID 440 Analog (hw:0,0)
+      [1] HDA ATI SB: ID 440 Digital (hw:0,3)
+      [2] HDA ATI HDMI: 0 (hw:1,3)
+      [3] sysdefault
+      [4] front
+      [5] surround21
+      [6] surround40
+      ...
+      [13] dmix
+      [14] default
+      [15] system
+      [16] PulseAudio JACK Source
+
+  (output is truncated, as it also includes misc info for each of these
+  devices/ports that PortAudio/PJSUA provides)
+
+  This should print a potentially-long list of "playback devices" (PJSUA
+  terminology) that can be used for output there, as shown above.
+
+  JACK default output (as created by e.g. ``-d dummy`` option to jackd) in the
+  example list above is called "system" - same as in JACK, and should be matched
+  by default.
+
+  If any other JACK-input/PortAudio-output should be used, it can be specified
+  either as numeric id (number in square brackets on the left) or regexp (python
+  style) to match against name in the list.
+
+  ``pjsua-conf-port`` option can be used to match one of the "conference ports"
+  from ``paging --dump-pjsua-conf-ports`` command output in the same fashion, if
+  there will ever be more than one (due to more complex pjsua configuration, for
+  example), otherwise it'll work fine with empty default.
+
+
+* JACK daemon startup and control client connection configuration.
 
   Related configuration options:
 
@@ -148,7 +191,18 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   * jack-server-name
   * jack-client-name
 
+  All of these are common JACK client settings, described in jackd(1),
+  jackstart(1) manpages, libjack or `jack-client module documentation`_.
+
+  With exception for self-explanatory ``jack-autostart``, these options should
+  be irrelevant, unless this script is used with multiple JACK instances or
+  clients.
+
+
 * Settings for stream multiplexing and parameters for JACK.
+
+  None yet, as there isn't much to connect but signle PJSUA input to all outputs.
+
 
 * Configuration for any non-call inputs (music, klaxons, etc) for JACK.
 
@@ -156,15 +210,26 @@ Hence audio configuration can be roughly divided into these sections (at the mom
 
   * klaxon
 
+  Described in `paging.example.conf`_.
+
+
 * List of hardware outputs (ALSA PCMs) to use as JACK final outputs/sinks.
 
   Related configuration options:
 
   * jack-output-ports
 
+  Same as with PJSUA outputs/ports above, ``jack-output-ports`` can be
+  enumerated via ``paging --dump-jack-ports`` command, and filtered by direct id
+  or name regexp, if necessary.
 
-All settings mentioned here are located in the [audio] section of the
-configuration file, see `paging.example.conf`_ for descriptons for all of these.
+  Default is to route PJSUA call to all outputs available in JACK.
+
+
+All settings mentioned here are located in the ``[audio]`` section of the
+configuration file.
+
+See `paging.example.conf`_ for more detailed descriptons.
 
 
 Requirements
@@ -312,6 +377,7 @@ To be spliced here later::
 .. _PortAudio: http://www.portaudio.com/
 .. _somewhat-unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
 .. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
+.. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
 
 .. _Python 2.7: http://python.org/
 .. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/

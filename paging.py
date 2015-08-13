@@ -18,8 +18,8 @@ class Conf(object):
     sip_pass = ''
 
     audio_klaxon = ''
-    audio_output_device = '^system$' # name of a default jack port
-    audio_output_port = '' # there should be only one
+    audio_pjsua_device = '^system$' # name of a default jack port
+    audio_pjsua_conf_port = '' # there should be only one
     audio_jack_output_port = ''
     audio_jack_autostart = True
     audio_jack_server_name = ''
@@ -223,7 +223,7 @@ def pprint_infos(infos, title=None, pre=None, buff=None):
     pre = pre or ''
     if isinstance(infos, dict): infos = infos.values()
     for info in infos:
-        info_id = '[{}]'.format(info['id']) if 'id' in info else ''
+        info_id = '[{}] '.format(info['id']) if 'id' in info else ''
         p('{}{}{}'.format(pre, info_id, info['name']))
         for k, v in sorted(info.viewitems()):
             if k in ['id', 'name']: continue
@@ -288,14 +288,14 @@ class PagingServer(object):
 
     def init_outputs(self):
         if self.pj_out_dev is None:
-            m, spec = self.get_pj_out_devs(), self.conf.audio_output_device
+            m, spec = self.get_pj_out_devs(), self.conf.audio_pjsua_device
             m = self.match_info(m, spec, 'output device')
             self.pj_out_dev = m['id']
             log.debug('Using output device: %s [%s]', m['name'], self.pj_out_dev)
             self.lib.set_snd_dev(-1, self.pj_out_dev)
 
         if self.pj_out_port is None:
-            m, spec = self.get_pj_conf_ports(), self.conf.audio_output_port
+            m, spec = self.get_pj_conf_ports(), self.conf.audio_pjsua_conf_port
             m = self.match_info(m, spec, 'conference output port')
             self.pj_out_port = m['id']
             log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
@@ -481,9 +481,9 @@ def main(args=None, defaults=None):
     group = parser.add_argument_group(
         'pjsua output configuration and testing',
         'Options related to sound output from SIP calls (pjsua client).')
-    group.add_argument('--dump-sound-devices', action='store_true',
+    group.add_argument('--dump-pjsua-devices', action='store_true',
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
-    group.add_argument('--dump-conf-ports', action='store_true',
+    group.add_argument('--dump-pjsua-conf-ports', action='store_true',
         help='Dump the list of conference ports that pjsua creates after init and exit.')
     group.add_argument('--dump-jack-ports', action='store_true',
         help='Dump the list of jack output ports that are available.')
@@ -577,13 +577,13 @@ def main(args=None, defaults=None):
 
     server_ctx = PagingServer(conf, sd_cycle)
 
-    if opts.dump_sound_devices:
+    if opts.dump_pjsua_devices:
         with server_ctx as server:
             devs = server.get_pj_out_devs()
             pprint_infos(devs, 'Detected sound devices')
         return
 
-    if opts.dump_conf_ports:
+    if opts.dump_pjsua_conf_ports:
         with server_ctx as server:
             ports = server.get_pj_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
