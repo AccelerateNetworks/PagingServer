@@ -29,13 +29,16 @@ Usage
 After installation (see below), the script should be configured, providing it
 with at least the SIP account data for the general usage.
 
-Default configuration file locations it will try to read from:
+Configuration file (`ini format`_) locations:
 
 * paging.conf
 * /etc/paging.conf
 * callpipe.conf
 * /etc/callpipe.conf
-* Config paths specified on the command line.
+* Paths specified on the command line.
+
+All files will be looked up and parsed in that order, values in next ones
+overriding corresponding ones in the previous and defaults.
 
 See output of ``paging --help`` for info on how to specify additional
 configuration, more up-to-date list of default paths, as well as general
@@ -48,12 +51,20 @@ To see default configuration options, use ``paging --dump-conf-defaults``, and
 run ``paging --dump-conf ...`` to see the actual options being picked-up and
 used at any time.
 
+There are two general (supported) ways to start and run the script:
 
-There are two general ways to start and run the script:
+* In the foreground (non-forking).
+* As a systemd service.
+
+Both are described in more detail below.
+
+.. _ini format: https://en.wikipedia.org/wiki/INI_file
 
 
-Simple non-forking startup
-``````````````````````````
+Start/run in the foreground
+```````````````````````````
+
+Aka simple non-forking start.
 
 Just run the thing as::
 
@@ -100,7 +111,43 @@ TODO: portaudio/jack/alsa concepts
 Requirements
 ````````````
 
-TODO
+* `Python 2.7`_ (NOT 3.X).
+
+* PJSUA_ (PJSIP User Agent) and its python bindings.
+
+  Can be packaged as "pjsip", "pjsua" or "pjproject" in linux distros.
+
+  Python bindings (from the same tarball) can also be packaged separately as
+  "python-pjproject" or something like that.
+
+  If either of those isn't available, be sure to build and install pjsua AND its
+  python bindings manually from the same sources, and NOT e.g. install pjsua
+  from package and then build bindings separately.
+
+* JACK_ - both JACK1 (C) and JACK2 (C++) forks should work.
+
+  Only tested with JACK1 fork, but as both have same ABI and only interacted
+  with via libjack, there should be no difference wrt which one is actually
+  running.
+
+* `JACK-Client python module`_
+
+* (optional) `python-systemd`_ - only if ``--systemd`` option is used (e.g. with
+  shipped .service file).
+
+  Developed and shipped separately from main systemd package since v223
+  (2015-07-29), likely come installed with systemd prior to that.
+
+  Would probably make sense to install these from OS package, which should be
+  available if systemd is used there as init by default.
+
+* (optional) `raven python module`_ - for reporting any errors via sentry.
+
+.. _Python 2.7: http://python.org/
+.. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
+.. _raven python module: https://pypi.python.org/pypi/raven/5.5.0
+.. _python-systemd: https://github.com/systemd/python-systemd
+
 
 
 Other stuff

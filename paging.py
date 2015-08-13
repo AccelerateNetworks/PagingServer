@@ -18,8 +18,12 @@ class Conf(object):
     sip_pass = ''
 
     audio_klaxon = ''
-    audio_output_device = 'system'
+    audio_output_device = '^system$' # name of a default jack port
     audio_output_port = '' # there should be only one
+    audio_jack_output_port = ''
+    audio_jack_autostart = True
+    audio_jack_server_name = ''
+    audio_jack_client_name = ''
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -219,7 +223,8 @@ def pprint_infos(infos, title=None, pre=None, buff=None):
     pre = pre or ''
     if isinstance(infos, dict): infos = infos.values()
     for info in infos:
-        p('{0}[{1[id]}] {1[name]}'.format(pre, info))
+        info_id = '[{}]'.format(info['id']) if 'id' in info else ''
+        p('{}{}{}'.format(pre, info_id, info['name']))
         for k, v in sorted(info.viewitems()):
             if k in ['id', 'name']: continue
             p('{}  {}: {}'.format(pre, k, v))
@@ -238,54 +243,22 @@ def pprint_conf(conf, title=None):
         if isinstance(v, bool): v = ['no', 'yes'][v]
         print('{} = {}'.format(m.group(2), v))
 
+
 class PagingServerError(Exception): pass
+
 class PSConfigurationError(PagingServerError): pass
+
 
 class PagingServer(object):
 
-    lib = out_dev_id = out_port_id = None
+    lib = jack = None
+    pj_out_dev = pj_out_port = jack_in = jack_out = None
 
     @err_report_wrapper
     def __init__(self, conf, sd_cycle=None):
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
 
-    @err_report_fatal
-    def init(self):
-        self.log.debug('pjsua init')
-
-        # Before logging is configured, pjsua prints some init info to plain stderr fd
-        # Unless there's a good reason to see this, like debugging early crashes,
-        #  there should be no need to have this exception, hence the "suppress" hack
-        with suppress_streams('stdout'): self.lib = lib = pj.Lib()
-
-        conf_ua = pj.UAConfig()
-        conf_ua.max_calls = 10
-        conf_ua.user_agent = ( 'PagingServer/git'
-            ' (+https://github.com/AccelerateNetworks/PagingServer)' )
-
-        conf_log = lambda level,msg,n,\
-            log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
-        conf_log = pj.LogConfig(level=self.conf.server_pjsua_log_level, callback=conf_log)
-
-        lib.init(conf_ua, conf_log) # XXX: media config
-
-        transport = lib.create_transport(pj.TransportType.UDP)
-        lib.start(with_thread=False)
-        lib.c = pj._pjsua
-
-    @err_report_fatal
-    def destroy(self):
-        if not self.lib: return
-        self.log.debug('pjsua cleanup')
-        self.lib.destroy()
-        self.lib = None
-
-    def __enter__(self):
-        self.init()
-        return self
-    def __exit__(self, *err): self.destroy()
-    def __del__(self): self.destroy()
 
     def match_info(self, infos, spec, kind):
         if spec.isdigit():
@@ -314,18 +287,100 @@ class PagingServer(object):
         return infos_match[0]
 
     def init_outputs(self):
-        if self.out_dev_id is None:
-            m, spec = self.get_sound_devices(), self.conf.audio_output_device
+        if self.pj_out_dev is None:
+            m, spec = self.get_pj_out_devs(), self.conf.audio_output_device
             m = self.match_info(m, spec, 'output device')
-            self.out_dev_id = m['id']
-            log.debug('Using output device: %s [%s]', m['name'], self.out_dev_id)
-            self.lib.set_snd_dev(-1, self.out_dev_id)
+            self.pj_out_dev = m['id']
+            log.debug('Using output device: %s [%s]', m['name'], self.pj_out_dev)
+            self.lib.set_snd_dev(-1, self.pj_out_dev)
 
-        if self.out_port_id is None:
-            m, spec = self.get_conf_ports(), self.conf.audio_output_port
+        if self.pj_out_port is None:
+            m, spec = self.get_pj_conf_ports(), self.conf.audio_output_port
             m = self.match_info(m, spec, 'conference output port')
-            self.out_port_id = m['id']
-            log.debug('Using output port: %s [%s]', m['name'], self.out_port_id)
+            self.pj_out_port = m['id']
+            log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
+
+        portaudio_jacks = self.jack.get_ports(r'^PortAudio:', is_audio=True)
+        portaudio_jacks = map( lambda p: len(p) == 1 and bytes(p[0].name),
+            (filter(op.attrgetter(k), portaudio_jacks) for k in ['is_output', 'is_input']) )
+        assert all(portaudio_jacks), portaudio_jacks
+        self.jack_in, self.jack_out = portaudio_jacks
+
+        # Connect pj -> hw jacks
+        jacks_conns = set(map(
+            op.attrgetter('name'), self.jack.get_all_connections(self.jack_in) ))
+        jacks_out = self.get_jack_out_ports(self.conf.audio_jack_output_port)
+        for p in jacks_out.viewkeys():
+            if p == self.jack_out: continue
+            if p in jacks_conns:
+                jacks_conns.remove(p)
+                continue
+            self.jack.connect(self.jack_in, p)
+        for p in jacks_conns: self.jack.disconnect(self.jack_in, p)
+
+        # Disconnect * -> pj jacks, just in case
+        jacks_conns = set(map(
+            op.attrgetter('name'), self.jack.get_all_connections(self.jack_out) ))
+        for p in jacks_conns: self.jack.disconnect(p, self.jack_out)
+
+
+    @err_report_fatal
+    def init(self):
+        assert not (self.lib or self.jack)
+
+        self.log.debug('jack init')
+
+        import jack
+        client_name = self.conf.audio_jack_client_name
+        if not client_name: client_name = 'paging.{}'.format(os.getpid())
+        self.jack = jack.Client( client_name,
+            servername=self.conf.audio_jack_server_name or None,
+            no_start_server=not self.conf.audio_jack_autostart )
+        self.jack.activate()
+        self.jack.Error = jack.JackError
+
+        self.log.debug('pjsua init')
+
+        # Before logging is configured, pjsua prints some init info to plain stderr fd
+        # Unless there's a good reason to see this, like debugging early crashes,
+        #  there should be no need to have this exception, hence the "suppress" hack
+        with suppress_streams('stdout'): self.lib = lib = pj.Lib()
+
+        conf_ua = pj.UAConfig()
+        conf_ua.max_calls = 10
+        conf_ua.user_agent = ( 'PagingServer/git'
+            ' (+https://github.com/AccelerateNetworks/PagingServer)' )
+        conf_media = pj.MediaConfig()
+
+        conf_log = lambda level,msg,n,\
+            log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
+        conf_log = pj.LogConfig(level=self.conf.server_pjsua_log_level, callback=conf_log)
+
+        lib.init(conf_ua, conf_log, conf_media)
+
+        transport = lib.create_transport(pj.TransportType.UDP)
+        lib.start(with_thread=False)
+        lib.c = pj._pjsua
+
+    @err_report_fatal
+    def destroy(self):
+        if not self.lib: return
+
+        self.log.debug('pjsua cleanup')
+        self.lib.destroy()
+        self.lib = None
+
+        self.log.debug('jack cleanup')
+        self.jack.deactivate()
+        self.jack.close()
+        self.jack = None
+
+    def __enter__(self):
+        self.init()
+        return self
+    def __exit__(self, *err): self.destroy()
+    def __del__(self): self.destroy()
+
 
     @err_report_fatal
     def run(self):
@@ -350,14 +405,24 @@ class PagingServer(object):
         log.debug('pjsua event loop has been stopped')
 
 
-    def get_conf_ports(self):
+    def get_pj_conf_ports(self):
         return dict(
             (n, dict_with(dict_for_ctype(self.lib.c.conf_get_port_info(port_id)), id=n))
             for n, port_id in enumerate(self.lib.c.enum_conf_ports()) )
 
-    def get_sound_devices(self):
+    def get_pj_out_devs(self):
         return dict( (n, dict_with(vars(dev), id=n))
             for n, dev in enumerate(self.lib.enum_snd_dev()) )
+
+    def get_jack_out_ports(self, name_re=''):
+        ports = dict()
+        for p in self.jack.get_ports(name_re, is_audio=True, is_input=True):
+            port = dict()
+            for k in dir(p):
+                if k not in ['name', 'uuid']: continue
+                port[k] = getattr(p, k)
+            ports[port['name']] = port
+        return ports
 
 
     @contextmanager
@@ -367,7 +432,7 @@ class PagingServer(object):
         player_id = self.lib.create_player(path, loop=loop)
         try:
             player_port = self.lib.player_get_slot(player_id)
-            if connect_to_out: self.lib.conf_connect(player_port, self.out_port_id)
+            if connect_to_out: self.lib.conf_connect(player_port, self.pj_out_port)
             yield player_port
         finally: self.lib.player_destroy(player_id)
 
@@ -420,6 +485,8 @@ def main(args=None, defaults=None):
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
     group.add_argument('--dump-conf-ports', action='store_true',
         help='Dump the list of conference ports that pjsua creates after init and exit.')
+    group.add_argument('--dump-jack-ports', action='store_true',
+        help='Dump the list of jack output ports that are available.')
     group.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file from pjsua output and exit.'
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
@@ -512,14 +579,20 @@ def main(args=None, defaults=None):
 
     if opts.dump_sound_devices:
         with server_ctx as server:
-            devs = server.get_sound_devices()
+            devs = server.get_pj_out_devs()
             pprint_infos(devs, 'Detected sound devices')
         return
 
     if opts.dump_conf_ports:
         with server_ctx as server:
-            ports = server.get_conf_ports()
+            ports = server.get_pj_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
+        return
+
+    if opts.dump_jack_ports:
+        with server_ctx as server:
+            ports = server.get_jack_out_ports()
+            pprint_infos(ports, 'Detected jack output ports')
         return
 
     if opts.test_audio_file:
@@ -540,7 +613,5 @@ def main(args=None, defaults=None):
             print(bytes(err), file=sys.stderr)
             return 1
     log.info('Finished')
-
-    return err
 
 if __name__ == '__main__': sys.exit(main())
