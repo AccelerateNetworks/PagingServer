@@ -1,9 +1,3 @@
-.. contents:: :depth: 5
-
------------------------
-
-
-
 PagingServer
 ============
 
@@ -24,12 +18,16 @@ Script controls both PJSUA and JACK to make them work to that effect.
 .. _JACK: http://jackaudio.org/
 
 
+.. contents::
+  :backlinks: none
+
+
 
 Usage
 -----
 
-After _`Installation`, the script should be configured, providing it with at least
-the SIP account data for the general usage.
+After installation (see below), the script should be configured, providing it
+with at least the SIP account data for the general usage.
 
 Default configuration file locations it will try to read from:
 
@@ -65,7 +63,7 @@ Can be used directly from terminal, or with any init system or daemon manager,
 including systemd, upstart, openrc, runit, daemontools, debian's
 "start-stop-daemon", simple bash scripts, etc.
 
-For systemd in particular, see the _`Running as systemd service` section below.
+For systemd in particular, see the "Running as a systemd service" section below.
 
 Running from terminal to understand what's going on, these options might be also
 useful::
@@ -79,6 +77,13 @@ Running as a systemd service
 ````````````````````````````
 
 TODO
+
+
+
+Audio configuration
+-------------------
+
+TODO: portaudio/jack/alsa concepts, knobs for these
 
 
 
