@@ -328,7 +328,7 @@ class PagingServer(object):
     @contextmanager
     def wav_play(self, path, loop=False, connect_to_out=True):
         # Currently there (still!) doesn't seem to be any callback for player EOF:
-        # http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
+        #  http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
         player_id = self.lib.create_player(path, loop=loop)
         try:
             player_port = self.lib.player_get_slot(player_id)
@@ -366,39 +366,70 @@ def pprint_infos(infos, title=None, pre=None):
             if k in ['id', 'name']: continue
             print('{}  {}: {}'.format(pre, k, v))
 
+def pprint_conf(conf, title=None):
+    cat, chk = None, re.compile(
+        '^({})_(.*)$'.format('|'.join(map(re.escape, conf._conf_sections))) )
+    if title: print(';; {}'.format(title))
+    for k in sorted(dir(conf)):
+        m = chk.search(k)
+        if not m: continue
+        if m.group(1) != cat:
+            cat = m.group(1)
+            print('\n[{}]'.format(cat))
+        v = conf.get(k)
+        if isinstance(v, bool): v = ['no', 'yes'][v]
+        print('{} = {}'.format(m.group(2), v))
+
 def main(args=None, defaults=None):
     defaults = defaults or Conf()
 
     import argparse
     parser = argparse.ArgumentParser(
-        description='Script to auto-answer SIP calls after playing some announcement?')
+        usage='%(prog)s [options] [conf [conf ...]]',
+        description='SIP-based Announcement / PA / Paging / Public Address Server system.')
 
-    parser.add_argument('conf', nargs='*',
+    group = parser.add_argument_group('configuration options')
+    group.add_argument('conf', nargs='*',
         help='Extra config files to load on top of default ones.'
             ' Values in latter ones override those in the former, cli values override all.'
             ' Initial files (always loaded, if exist): {}'.format(' '.join(defaults._conf_paths)))
+    group.add_argument('--dump-conf', action='store_true',
+        help='Print all configuration settings, which will be used with'
+            ' currently detected (and/or specified) configuration files, and exit.')
+    group.add_argument('--dump-conf-defaults', action='store_true',
+        help='Print all default settings, which would be used'
+            ' if no configuration files were overriding these, and exit.')
 
-    parser.add_argument('--systemd', action='store_true',
+    group = parser.add_argument_group('startup options')
+    group.add_argument('--systemd', action='store_true',
         help='Use systemd service'
             ' notification/watchdog mechanisms in daemon modes, if available.')
 
-    parser.add_argument('-d', '--debug',
+    group = parser.add_argument_group(
+        'pjsua output configuration and testing',
+        'Options related to sound output from SIP calls (pjsua client).')
+    group.add_argument('--dump-sound-devices', action='store_true',
+        help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
+    group.add_argument('--dump-conf-ports', action='store_true',
+        help='Dump the list of conference ports that pjsua creates after init and exit.')
+    group.add_argument('--test-audio-file', metavar='path',
+        help='Play specified wav file from pjsua output and exit.'
+            ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
+
+    group = parser.add_argument_group(
+        'debugging options',
+        'Use these to understand more about what'
+            ' is failing or going on. Can be especially useful on first runs.')
+    group.add_argument('-d', '--debug',
         action='store_true', help='Verbose operation mode.')
-    parser.add_argument('--pjsua-log-level',
+    group.add_argument('--pjsua-log-level',
         metavar='0-10', type=int,
         help='pjsua lib logging level. Only used when --debug is enabled.'
             ' Zero is only for fatal errors, higher levels are more noisy.'
             ' Default: {}'.format(defaults.server_pjsua_log_level))
-    parser.add_argument('--sentry-dsn', metavar='dsn',
+    group.add_argument('--sentry-dsn', metavar='dsn',
         help='Use Sentry to capture errors/logging using "raven" module.'
             ' Default: {}'.format(defaults.server_sentry_dsn))
-
-    parser.add_argument('--dump-sound-devices', action='store_true',
-        help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
-    parser.add_argument('--dump-conf-ports', action='store_true',
-        help='Dump the list of conference ports that pjsua creates after init and exit.')
-    parser.add_argument('--test-audio-file', metavar='path',
-        help='Play specified wav file and exit.')
 
     opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -413,6 +444,10 @@ def main(args=None, defaults=None):
         for k in 'stdout', 'stderr':
             setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
 
+    if opts.dump_conf_defaults:
+        pprint_conf(defaults, 'Default configuration options')
+        return
+
     conf_file = configparser.SafeConfigParser(allow_no_value=True)
     conf_user_paths = map(expanduser, opts.conf or list())
     for p in conf_user_paths:
@@ -426,6 +461,10 @@ def main(args=None, defaults=None):
     for k in 'debug', 'pjsua_log_level', 'sentry_dsn':
         v = getattr(opts, k)
         if v is not None: setattr(conf, 'server_{}'.format(k), v)
+
+    if opts.dump_conf:
+        pprint_conf(conf, 'Current configuration options')
+        return
 
     if conf.server_sentry_dsn:
         global raven_client
