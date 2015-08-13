@@ -14,9 +14,6 @@ in that call.
 
 Script controls both PJSUA and JACK to make them work to that effect.
 
-.. _PJSUA: http://www.pjsip.org/
-.. _JACK: http://jackaudio.org/
-
 
 .. contents::
   :backlinks: none
@@ -44,7 +41,7 @@ See output of ``paging --help`` for info on how to specify additional
 configuration, more up-to-date list of default paths, as well as general
 information for all the other options available.
 
-Provided `paging.example.conf <paging.example.conf>`_ file has all the available
+Provided `paging.example.conf`_ file has all the available
 configuration options and their descriptions.
 
 To see default configuration options, use ``paging --dump-conf-defaults``, and
@@ -57,8 +54,6 @@ There are two general (supported) ways to start and run the script:
 * As a systemd service.
 
 Both are described in more detail below.
-
-.. _ini format: https://en.wikipedia.org/wiki/INI_file
 
 
 Start/run in the foreground
@@ -104,8 +99,72 @@ TODO
 Audio configuration
 ```````````````````
 
-TODO: portaudio/jack/alsa concepts
- knobs for these, --test option, ffmpeg line to get wav ;)
+Overview of the software stack related to audio flow:
+
+* PJSUA picks-up the calls, decoding audio streams from SIP connections.
+
+* PJSUA outputs call audio to via PortAudio_.
+
+* PortAudio can use multiple backends on linux systems, including:
+
+  * ALSA libs (and straight down to linux kernel)
+  * OSS (/dev/dsp*, only supported through emulation layer in modern kernels)
+  * JACK sound server
+  * PulseAudio sound server
+    (with a `somewhat unstable patch`_, see `comment on #3`_ for details)
+
+  In this particular implementation, JACK backend is used, as it is necessary to
+  later multiplex PJSUA output to multiple destinations and mix-in sounds from
+  other sources there.
+
+  So PortAudio sends sound stream to JACK.
+
+* JACK serves as a "hub", receiving streams from music players (mpd instances),
+  klaxon sounds, calls picked-up by PJSUA.
+
+  JACK mixes these streams together, muting and connecting/disconnecting some as
+  necessary, controlled by the server script ("paging").
+
+  End result is N stream(s) corresponding to (N) configured hardware output(s).
+
+* JACK outputs resulting sound stream(s) through ALSA libs (and linux from
+  there) to the sound hardware.
+
+
+Hence audio configuration can be roughly divided into these sections (at the moment):
+
+* Sound output settings for PJSUA.
+
+  Related configuration options:
+
+  * output-device
+  * output-port
+
+* JACK daemon startup and control client configuration.
+
+  Related configuration options:
+
+  * jack-autostart
+  * jack-server-name
+  * jack-client-name
+
+* Settings for stream multiplexing and parameters for JACK.
+
+* Configuration for any non-call inputs (music, klaxons, etc) for JACK.
+
+  Related configuration options:
+
+  * klaxon
+
+* List of hardware outputs (ALSA PCMs) to use as JACK final outputs/sinks.
+
+  Related configuration options:
+
+  * jack-output-ports
+
+
+All settings mentioned here are located in the [audio] section of the
+configuration file, see `paging.example.conf`_ for descriptons for all of these.
 
 
 Requirements
@@ -143,10 +202,6 @@ Requirements
 
 * (optional) `raven python module`_ - for reporting any errors via sentry.
 
-.. _Python 2.7: http://python.org/
-.. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
-.. _raven python module: https://pypi.python.org/pypi/raven/5.5.0
-.. _python-systemd: https://github.com/systemd/python-systemd
 
 
 
@@ -248,3 +303,17 @@ To be spliced here later::
   Run in bash/terminal:
   /usr/bin/python /opt/bin/callram.py
   ```
+
+
+.. _PJSUA: http://www.pjsip.org/
+.. _JACK: http://jackaudio.org/
+.. _ini format: https://en.wikipedia.org/wiki/INI_file
+.. _paging.example.conf: paging.example.conf
+.. _PortAudio: http://www.portaudio.com/
+.. _somewhat-unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
+.. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
+
+.. _Python 2.7: http://python.org/
+.. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
+.. _raven python module: https://pypi.python.org/pypi/raven/5.5.0
+.. _python-systemd: https://github.com/systemd/python-systemd
