@@ -72,6 +72,8 @@ useful::
   paging --debug --pjsua-log-level 10
   paging --dump-conf
 
+See also "Installation" and "Audio configuration" sections below.
+
 
 Running as a systemd service
 ````````````````````````````
@@ -80,17 +82,20 @@ TODO
 
 
 
-Audio configuration
--------------------
-
-TODO: portaudio/jack/alsa concepts, knobs for these
-
 
 
 Installation
 ------------
 
 TODO
+
+
+Audio configuration
+```````````````````
+
+TODO: portaudio/jack/alsa concepts
+ knobs for these, --test option, ffmpeg line to get wav ;)
+
 
 Requirements
 ````````````

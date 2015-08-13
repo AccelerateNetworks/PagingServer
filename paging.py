@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager, closing
 import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser
-import os, sys, re, types, time, signal, logging, inspect
+import os, sys, io, re, types, time, signal, logging, inspect
 
 import pjsua as pj
 
@@ -18,8 +18,8 @@ class Conf(object):
     sip_pass = ''
 
     audio_klaxon = ''
-    audio_output_device = '0'
-    audio_output_port = ''
+    audio_output_device = 'system'
+    audio_output_port = '' # there should be only one
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -211,6 +211,33 @@ class CallCallback(pj.CallCallback):
 
 ### Server
 
+def pprint_infos(infos, title=None, pre=None, buff=None):
+    p = print if not buff else ft.partial(print, file=buff)
+    if title:
+        p('{}:'.format(title))
+        if pre is None: pre = ' '*2
+    pre = pre or ''
+    if isinstance(infos, dict): infos = infos.values()
+    for info in infos:
+        p('{0}[{1[id]}] {1[name]}'.format(pre, info))
+        for k, v in sorted(info.viewitems()):
+            if k in ['id', 'name']: continue
+            p('{}  {}: {}'.format(pre, k, v))
+
+def pprint_conf(conf, title=None):
+    cat, chk = None, re.compile(
+        '^({})_(.*)$'.format('|'.join(map(re.escape, conf._conf_sections))) )
+    if title: print(';; {}'.format(title))
+    for k in sorted(dir(conf)):
+        m = chk.search(k)
+        if not m: continue
+        if m.group(1) != cat:
+            cat = m.group(1)
+            print('\n[{}]'.format(cat))
+        v = conf.get(k)
+        if isinstance(v, bool): v = ['no', 'yes'][v]
+        print('{} = {}'.format(m.group(2), v))
+
 class PagingServerError(Exception): pass
 class PSConfigurationError(PagingServerError): pass
 
@@ -268,19 +295,27 @@ class PagingServer(object):
                     ' available: %s', kind, spec, ', '.join(map(bytes, infos.keys())) )
                 infos = list()
         else:
-            info_match = re.compile(spec)
-            infos, infos_pool = list(), infos.values()
-            for info in infos_pool:
-                if info_match.search(info['name']): infos.append(info)
-        if len(infos) != 1:
+            info_re = re.compile(spec, re.I)
+            infos_match, infos_left = list(), list()
+            for info in infos.viewvalues():
+                dst_list = infos_match if info_re.search(info['name']) else infos_left
+                dst_list.append(info)
+        if len(infos_match) != 1:
+            buff = io.BytesIO()
+            pprint_infos( infos_match, 'Specification {!r}'
+                ' matched {} entries'.format(spec, len(infos_match)), buff=buff )
+            pprint_infos( infos_left,
+                'Unmatched entries'.format(spec, len(infos_left)), buff=buff )
             raise PSConfigurationError(
-                'Failed to pick matching {} after pjsua init (spec: {!r}, matched count: {})'\
-                .format(kind, spec, len(infos)) )
-        return infos[0]
+                ( 'Failed to pick matching {} after pjsua init.\n{}'
+                    'Only one of these has to be specified in the configuration file.\n'
+                    'See "Audio configuration" section in the README file for more details.' )
+                .format(kind, buff.getvalue()) )
+        return infos_match[0]
 
     def init_outputs(self):
         if self.out_dev_id is None:
-            m, spec = self.get_sound_devices(), self.conf.audio_output_port
+            m, spec = self.get_sound_devices(), self.conf.audio_output_device
             m = self.match_info(m, spec, 'output device')
             self.out_dev_id = m['id']
             log.debug('Using output device: %s [%s]', m['name'], self.out_dev_id)
@@ -352,33 +387,6 @@ class PagingServer(object):
             self.log.debug('Started blocking playback of wav with length: %.1fs', ts_diff)
             time.sleep(ts_diff + ts_diff_pad)
 
-
-
-def pprint_infos(infos, title=None, pre=None):
-    if title:
-        print('{}:'.format(title))
-        if pre is None: pre = ' '*2
-    pre = pre or ''
-    if isinstance(infos, dict): infos = infos.values()
-    for info in infos:
-        print('{0}[{1[id]}] {1[name]}'.format(pre, info))
-        for k, v in sorted(info.viewitems()):
-            if k in ['id', 'name']: continue
-            print('{}  {}: {}'.format(pre, k, v))
-
-def pprint_conf(conf, title=None):
-    cat, chk = None, re.compile(
-        '^({})_(.*)$'.format('|'.join(map(re.escape, conf._conf_sections))) )
-    if title: print(';; {}'.format(title))
-    for k in sorted(dir(conf)):
-        m = chk.search(k)
-        if not m: continue
-        if m.group(1) != cat:
-            cat = m.group(1)
-            print('\n[{}]'.format(cat))
-        v = conf.get(k)
-        if isinstance(v, bool): v = ['no', 'yes'][v]
-        print('{} = {}'.format(m.group(2), v))
 
 def main(args=None, defaults=None):
     defaults = defaults or Conf()
@@ -516,7 +524,10 @@ def main(args=None, defaults=None):
 
     if opts.test_audio_file:
         with server_ctx as server:
-            server.init_outputs()
+            try: server.init_outputs()
+            except PSConfigurationError as err:
+                print(bytes(err), file=sys.stderr)
+                return 1
             server.wav_play_sync(opts.test_audio_file)
         return
 
@@ -524,7 +535,12 @@ def main(args=None, defaults=None):
     with server_ctx as server:
         for sig in signal.SIGINT, signal.SIGTERM:
             signal.signal(sig, lambda sig,frm: server.destroy())
-        server.run()
+        try: server.run()
+        except PSConfigurationError as err:
+            print(bytes(err), file=sys.stderr)
+            return 1
     log.info('Finished')
+
+    return err
 
 if __name__ == '__main__': sys.exit(main())
