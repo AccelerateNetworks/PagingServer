@@ -202,11 +202,6 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   JACK instances or clients.
 
 
-* Settings for stream multiplexing and parameters for JACK.
-
-  None yet, as there isn't much to connect but signle PJSUA input to all outputs.
-
-
 * Configuration for any non-call inputs (music, klaxons, etc) for JACK.
 
   Related configuration options:
@@ -214,6 +209,8 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   * klaxon
 
   Described in `paging.example.conf`_.
+
+  Music player integration stuff should be here, when implemented.
 
 
 * List of hardware outputs (ALSA PCMs) to use as JACK final outputs/sinks.
