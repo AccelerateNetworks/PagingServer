@@ -259,6 +259,9 @@ Requirements
 
 * `JACK-Client python module`_
 
+* (optional) ffmpeg_ binary - if audio samples are not wav files (will be
+  converted on every startup, if needed).
+
 * (optional) `python-systemd`_ - only if ``--systemd`` option is used (e.g. with
   shipped .service file).
 
@@ -277,6 +280,23 @@ Misc tips and tricks
 --------------------
 
 Collection of various things related to this project.
+
+
+Pre-convert klaxon sound(s) to wav from any format
+``````````````````````````````````````````````````
+
+Can be done via ffmpeg_ with::
+
+  ffmpeg -y -v 0 -i sample.mp3 -f wav sample.wav
+
+Where it doesn't actually matter which format source "sample.mp3" is in - can be
+mp3, ogg, aac, mpc, mp4 or whatever else ffmpeg supports.
+
+Might help to avoid startup delays to conversion of these on each run.
+
+If pjsua will be complaining about sample-rate difference between wav file and
+output, ``-ar 44100`` option can be used (after ``-f wav``) to have any sampling
+rate for the output file.
 
 
 Running JACK on a system where PulseAudio is the main sound server
@@ -406,6 +426,7 @@ To be spliced here later::
 .. _somewhat-unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
 .. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
 .. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
+.. _ffmpeg: http://ffmpeg.org/
 
 .. _Python 2.7: http://python.org/
 .. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/

@@ -5,7 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager, closing
 import ConfigParser as configparser
-from os.path import join, exists, isfile, expanduser
+from os.path import join, exists, isfile, expanduser, dirname
 import os, sys, io, re, types, time, signal, logging, inspect
 
 import pjsua as pj
@@ -18,6 +18,8 @@ class Conf(object):
     sip_pass = ''
 
     audio_klaxon = ''
+    audio_klaxon_tmpdir = ''
+    audio_klaxon_max_length = 10.0
     audio_pjsua_device = '^system$' # name of a default jack port
     audio_pjsua_conf_port = '' # there should be only one
     audio_jack_output_port = ''
@@ -269,6 +271,62 @@ def pprint_conf(conf, title=None):
         if isinstance(v, bool): v = ['no', 'yes'][v]
         print('{} = {}'.format(m.group(2), v))
 
+def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
+    import subprocess, hashlib, base64, tempfile, atexit
+    self = ffmpeg_towav
+    if not hasattr(self, 'init'):
+        self.init, self.procs, self.log = True, dict(), get_logger()
+        self.tmp_dir = tempfile.mkdtemp(prefix='ffmpeg_towav.{}.'.format(os.getpid()))
+        def proc_gc(sig, frm):
+            for p,proc in self.procs.items():
+                if p and proc and proc.poll() is not None:
+                    pid, err = proc.pid, proc.wait()
+                    if err != 0:
+                        self.log.warn( 'ffmpeg converter'
+                            ' pid (%s) has exited with error: %s', pid, err )
+                    self.procs[p] = None
+        def files_cleanup():
+            file_dirs, procs = set(), self.procs.items()
+            self.log.debug(
+                'ffmpeg cleanup (%s pid(s), %s tmp file(s))',
+                len(filter(all, procs)), len(procs) )
+            for p, proc in procs:
+                if p and proc and proc.poll() is not None: proc.kill()
+                try: os.unlink(p)
+                except (OSError, IOError): pass
+                file_dirs.add(dirname(p))
+            for p in file_dirs:
+                try: os.rmdir(p)
+                except (OSError, IOError): pass
+        chk = signal.signal(signal.SIGCHLD, proc_gc)
+        assert chk in [None, signal.SIG_IGN, signal.SIG_DFL], chk
+        atexit.register(files_cleanup)
+    if not tmp_dir: tmp_dir = self.tmp_dir
+
+    proc = dst_path = None
+    if path:
+        if path.endswith('.wav'): return path
+        dst_path = join(tmp_dir, '{}.wav'.format(
+            base64.urlsafe_b64encode(hashlib.sha256(path).digest())[:8] ))
+        if exists(dst_path): self.procs[dst_path] = None
+        else:
+            cmd = ['ffmpeg', '-y', '-v', '0']
+            if max_len: cmd += ['-t', bytes(max_len)]
+            cmd += ['-i', path, '-f', 'wav', dst_path]
+            self.log.debug('Starting ffmpeg conversion: %s', ' '.join(cmd))
+            proc = self.procs[dst_path] = subprocess.Popen(cmd, close_fds=True)
+    if block:
+        self.log.debug(
+            'Waiting for %s ffmpeg pid(s) to finish conversion',
+            len(filter(None, self.procs.values())) )
+        if proc: proc.wait()
+        else:
+            procs = self.procs.items()
+            if isinstance(block, (set, frozenset, list, tuple)):
+                procs = list((p,proc) for p,proc in procs if p in block)
+            for p, proc in procs: proc.wait()
+    return dst_path
+
 
 class PagingServerError(Exception): pass
 
@@ -421,13 +479,14 @@ class PagingServer(object):
         while True:
             if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
             else:
-                ts = time.time()
+                ts = time.time() # XXX: use monotonic time
                 max_poll_delay = self.sd_cycle.ts_next - ts
                 if max_poll_delay <= 0:
                     self.sd_cycle(ts)
                     continue
             if not self.lib: break
             self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
+            if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
         log.debug('pjsua event loop has been stopped')
 
 
@@ -625,13 +684,20 @@ def main(args=None, defaults=None):
         return
 
     if opts.test_audio_file:
+        opts.test_audio_file = ffmpeg_towav(opts.test_audio_file)
         with server_ctx as server:
-            try: server.init_outputs()
+            try:
+                server.init_outputs()
+                server.wav_play_sync(opts.test_audio_file)
             except PSConfigurationError as err:
                 print(bytes(err), file=sys.stderr)
                 return 1
-            server.wav_play_sync(opts.test_audio_file)
         return
+
+    if conf.audio_klaxon and not conf.audio_klaxon.endswith('.wav'):
+        conf.audio_klaxon = ffmpeg_towav( conf.audio_klaxon,
+            max_len=conf.audio_klaxon_max_length, tmp_dir=conf.audio_klaxon_tmpdir )
+        if not conf.audio_klaxon_tmpdir: conf.audio_klaxon_tmpdir = ffmpeg_towav.tmp_dir
 
     log.info('Starting PagingServer...')
     with server_ctx as server:
