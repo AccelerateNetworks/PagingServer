@@ -197,9 +197,9 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   All of these are common JACK client settings, described in jackd(1),
   jackstart(1) manpages, libjack or `jack-client module documentation`_.
 
-  With exception for self-explanatory ``jack-autostart``, these options should
-  be irrelevant, unless this script is used with multiple JACK instances or
-  clients.
+  With exception for self-explanatory ``jack-autostart`` (enabled by default),
+  these options should be irrelevant, unless this script is used with multiple
+  JACK instances or clients.
 
 
 * Settings for stream multiplexing and parameters for JACK.
