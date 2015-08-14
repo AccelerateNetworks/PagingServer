@@ -183,30 +183,37 @@ class PSAccountCallbacks(PSCallbacks):
 
     total_calls = 0
 
-    @err_report_wrapper
+    @err_report
     def __init__(self, server):
         self.server, self.cbs = server, pj.AccountCallback()
         self.log = get_logger()
 
-    @err_report_wrapper
+    @err_report_fatal
+    def on_reg_state(self):
+        acc = self.account.info()
+        self.log.debug(
+            'acc registration state (active: %s): %s %s',
+            acc.reg_active, acc.reg_status, acc.reg_reason )
+        if acc.reg_status >= 400:
+            raise PSAuthError( 'Account registration'
+                ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
+
+    @err_report
     def on_incoming_call(self, call):
         self.total_calls += 1
         call.set_callback(PSCallCallbacks(self.server, self.total_calls, call))
-        # XXX: klaxon not implemented yet
-        # if config.has_section('pa'):
-        # 	wav_player_id = pj.Lib.instance().create_player(config.get('pa', 'file'), loop=False)
-        # 	wav_slot = pj.Lib.instance().player_get_slot(wav_player_id)
-        # 	pj.Lib.instance().conf_connect(wav_slot, 0)
-        # 	time.sleep(config.getint('pa', 'filetime'))
-        # 	pj.Lib.instance().player_destroy(wav_player_id)
-        call.answer(200)
+        # XXX: SIP events, watchdog calls should be ran while this happens
+        #  but shouldn't be a problem if klaxon is no more than a few seconds long
+        # XXX: delay if another call is currently active
+        self.server.wav_play_sync(self.server.conf.audio_klaxon)
+        call.answer()
 
 class PSCallCallbacks(PSCallbacks):
 
     pj_media_states = dict(
         (v, k.lower()) for k,v in vars(pj.MediaState).viewitems() )
 
-    @err_report_wrapper
+    @err_report
     def __init__(self, server, call_id, call):
         self.cbs = pj.CallCallback(call)
         self.server, self.call_id, self.call = server, call_id, call
@@ -222,7 +229,7 @@ class PSCallCallbacks(PSCallbacks):
             ' (remote contact: %s)', self.caller, ci.remote_contact )
         self.ev_type = 'call [{}]'.format(self.caller)
 
-    @err_report_wrapper
+    @err_report
     def on_state(self):
         ci = self.call.info()
         state_last, self.call_state = self.call_state, ci.state_text.lower()
@@ -230,7 +237,7 @@ class PSCallCallbacks(PSCallbacks):
             'call [%s] state change: %r -> %r (SIP status: %s %s)',
             self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
 
-    @err_report_wrapper
+    @err_report
     def on_media_state(self, _state_dict=dict()):
         ci = self.call.info()
         state_last, self.media_state = self.media_state, self.pj_media_states[ci.media_state]
@@ -332,13 +339,15 @@ class PagingServerError(Exception): pass
 
 class PSConfigurationError(PagingServerError): pass
 
+class PSAuthError(PagingServerError): pass
+
 
 class PagingServer(object):
 
     lib = jack = None
     pj_out_dev = pj_out_port = jack_in = jack_out = None
 
-    @err_report_wrapper
+    @err_report
     def __init__(self, conf, sd_cycle=None):
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
@@ -475,6 +484,7 @@ class PagingServer(object):
             *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) ))
         acc.set_callback(PSAccountCallbacks(self))
 
+        self.running = True
         log.debug('pjsua event loop started')
         while True:
             if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
@@ -484,10 +494,12 @@ class PagingServer(object):
                 if max_poll_delay <= 0:
                     self.sd_cycle(ts)
                     continue
-            if not self.lib: break
+            if not (self.running and self.lib): break
             self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
             if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
         log.debug('pjsua event loop has been stopped')
+
+    def stop(self): self.running = False
 
 
     def get_pj_conf_ports(self):
@@ -535,9 +547,10 @@ class PagingServer(object):
             return src.getnframes() / float(src.getframerate())
 
     def wav_play_sync(self, path, ts_diff_pad=1.0):
-        ts_diff = self.wav_length(path)
+        ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
+        if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
         with self.wav_play(path) as player_port:
-            self.log.debug('Started blocking playback of wav with length: %.1fs', ts_diff)
+            self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
             time.sleep(ts_diff + ts_diff_pad)
 
 
@@ -704,8 +717,8 @@ def main(args=None, defaults=None):
         for sig in signal.SIGINT, signal.SIGTERM:
             signal.signal(sig, lambda sig,frm: server.destroy())
         try: server.run()
-        except PSConfigurationError as err:
-            print(bytes(err), file=sys.stderr)
+        except (PSConfigurationError, PSAuthError) as err:
+            print('ERROR [{}]: {}'.format(err.__class__.__name__, err), file=sys.stderr)
             return 1
     log.info('Finished')
 
