@@ -292,7 +292,7 @@ class PagingServer(object):
             m = self.match_info(m, spec, 'output device')
             self.pj_out_dev = m['id']
             log.debug('Using output device: %s [%s]', m['name'], self.pj_out_dev)
-            self.lib.set_snd_dev(-1, self.pj_out_dev)
+            self.lib.set_snd_dev(self.pj_out_dev, self.pj_out_dev)
 
         if self.pj_out_port is None:
             m, spec = self.get_pj_conf_ports(), self.conf.audio_pjsua_conf_port
