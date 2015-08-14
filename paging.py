@@ -155,61 +155,87 @@ def dict_for_ctype(obj):
     return dict((k, getattr(obj, k)) for k in dir(obj) if not k.startswith('_'))
 
 
-### PJSUA handlers
 
-# XXX: both are BROKEN, need to figure out hw audio output first
+### PJSUA event handlers
 
-class AccountCallback(pj.AccountCallback):
+class PSCallbacks(object):
+
+    ev_type = None
+
+    def __getattribute__(self, k):
+        event, cb_default = k[3:] if k.startswith('on_') else None, False
+        sself = super(PSCallbacks, self)
+        if not event:
+            try: return sself.__getattribute__(k)
+            except AttributeError: return getattr(self.cbs, k) # proxy
+        try: v = sself.__getattribute__(k)
+        except AttributeError: v, cb_default = getattr(self.cbs, k, AttributeError), True
+        if event:
+            self.log.debug( '%s event: %s%s',
+                self.ev_type or self.__class__.__name__,
+                event, ' [default callback]' if cb_default else '' )
+        if v is AttributeError: raise v(k)
+        return v
+
+class PSAccountCallbacks(PSCallbacks):
+
+    total_calls = 0
 
     @err_report_wrapper
-    def __init__(self, account=None):
-        pj.AccountCallback.__init__(self, account)
-        self.totalcalls = 0
+    def __init__(self, server):
+        self.server, self.cbs = server, pj.AccountCallback()
         self.log = get_logger()
 
     @err_report_wrapper
     def on_incoming_call(self, call):
-        self.totalcalls += 1
-        print('At call #%0.d' % self.totalcalls)
-        call.set_callback(CallCallback())
-        if config.has_section('pa'):
-            wav_player_id = pj.Lib.instance().create_player(config.get('pa', 'file'), loop=False)
-            wav_slot = pj.Lib.instance().player_get_slot(wav_player_id)
-            pj.Lib.instance().conf_connect(wav_slot, 0)
-            time.sleep(config.getint('pa', 'filetime'))
-            pj.Lib.instance().player_destroy(wav_player_id)
+        self.total_calls += 1
+        call.set_callback(PSCallCallbacks(self.server, self.total_calls, call))
+        # XXX: klaxon not implemented yet
+        # if config.has_section('pa'):
+        # 	wav_player_id = pj.Lib.instance().create_player(config.get('pa', 'file'), loop=False)
+        # 	wav_slot = pj.Lib.instance().player_get_slot(wav_player_id)
+        # 	pj.Lib.instance().conf_connect(wav_slot, 0)
+        # 	time.sleep(config.getint('pa', 'filetime'))
+        # 	pj.Lib.instance().player_destroy(wav_player_id)
         call.answer(200)
 
-class CallCallback(pj.CallCallback):
+class PSCallCallbacks(PSCallbacks):
+
+    pj_media_states = dict(
+        (v, k.lower()) for k,v in vars(pj.MediaState).viewitems() )
 
     @err_report_wrapper
-    def __init__(self, call=None, number=0):
-        pj.CallCallback.__init__(self, call)
-        self.call, self.number = call, number
+    def __init__(self, server, call_id, call):
+        self.cbs = pj.CallCallback(call)
+        self.server, self.call_id, self.call = server, call_id, call
         self.log = get_logger()
+        ci = self.call.info()
+        self.call_state = ci.state_text.lower()
+        self.media_state = self.pj_media_states[ci.media_state]
+        self.caller = ci.remote_uri
+        m = re.findall(r'<([^>]+)>', self.caller)
+        if m: self.caller = ' / '.join(m)
+        self.caller = '{} (#{})'.format(self.caller, self.call_id)
+        self.log.debug( 'New incoming call [%s]'
+            ' (remote contact: %s)', self.caller, ci.remote_contact )
+        self.ev_type = 'call [{}]'.format(self.caller)
 
     @err_report_wrapper
     def on_state(self):
-        log.debug(
-            'Call with %s is %s (last code=%s: %s)',
-            self.call.info().remote_uri,
-            self.call.info().state_text,
-            self.call.info().last_code,
-            self.call.info().last_reason )
-        if self.call.info().state_text == 'DISCONNCTD' and self.number > 30:
-            sys.exit(0) # XXX
+        ci = self.call.info()
+        state_last, self.call_state = self.call_state, ci.state_text.lower()
+        self.log.debug(
+            'call [%s] state change: %r -> %r (SIP status: %s %s)',
+            self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
 
     @err_report_wrapper
-    def on_media_state(self):
-        '''Notification when call's media state has changed.'''
-        if self.call.info().media_state == pj.MediaState.ACTIVE:
-            # Connect the call to sound device
-            call_slot = self.call.info().conf_slot
-            pj.Lib.instance().conf_connect(call_slot, 0)
-            pj.Lib.instance().conf_connect(0, call_slot)
-            log.debug('Media is now active')
-        else:
-            log.debug('Media is inactive')
+    def on_media_state(self, _state_dict=dict()):
+        ci = self.call.info()
+        state_last, self.media_state = self.media_state, self.pj_media_states[ci.media_state]
+        self.log.debug(
+            'call [%s] media-state change: %r -> %r (call time: %s)',
+            self.caller, state_last, self.media_state, ci.call_time )
+        if self.media_state == 'active': self.server.conf_port_connect(ci.conf_slot)
 
 
 
@@ -387,9 +413,9 @@ class PagingServer(object):
         assert self.lib, 'Must be initialized before run()'
         self.init_outputs()
 
-        acc_config = pj.AccountConfig(
-            *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) )
-        acc = self.lib.create_account(acc_config, cb=AccountCallback())
+        acc = self.lib.create_account(pj.AccountConfig(
+            *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) ))
+        acc.set_callback(PSAccountCallbacks(self))
 
         log.debug('pjsua event loop started')
         while True:
@@ -424,6 +450,9 @@ class PagingServer(object):
             ports[port['name']] = port
         return ports
 
+    def conf_port_connect(self, conf_port):
+        self.lib.conf_connect(conf_port, self.pj_out_port)
+
 
     @contextmanager
     def wav_play(self, path, loop=False, connect_to_out=True):
@@ -432,7 +461,7 @@ class PagingServer(object):
         player_id = self.lib.create_player(path, loop=loop)
         try:
             player_port = self.lib.player_get_slot(player_id)
-            if connect_to_out: self.lib.conf_connect(player_port, self.pj_out_port)
+            if connect_to_out: self.conf_port_connect(player_port)
             yield player_port
         finally: self.lib.player_destroy(player_id)
 
