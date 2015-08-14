@@ -177,6 +177,9 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   either as numeric id (number in square brackets on the left) or regexp (python
   style) to match against name in the list.
 
+  To avoid having any confusing non-JACK ports there, PortAudio can be compiled
+  with only JACK as a backend.
+
   ``pjsua-conf-port`` option can be used to match one of the "conference ports"
   from ``paging --dump-pjsua-conf-ports`` command output in the same fashion, if
   there will ever be more than one (due to more complex pjsua configuration, for
@@ -270,14 +273,39 @@ Requirements
 
 
 
-Other stuff
------------
+Misc tips and tricks
+--------------------
 
-TODO
+Collection of various things related to this project.
 
 
-Old md
-------
+Running JACK on a system where PulseAudio is the main sound server
+``````````````````````````````````````````````````````````````````
+
+First of all, jackd has to be started manually there, and strictly before
+pulseaudio server.
+
+Then, /etc/pulse/default.pa should have something like this at the end
+(after default sink init!)::
+
+  load-module module-jack-source source_name=jack_in
+  load-module module-loopback source=jack_in
+
+That will create an output from JACK to PulseAudio and from there to whatever
+actually makes sound on the particular system, provided that the loopback stream
+and source in question are not muted and have some non-zero volume set in pulse.
+
+"module-jack-source" has options for picking which jackd to connect to, if isn't
+not "default", "module-loopback" after it creates a stream from that jack source
+to a default sink (which is probably an ALSA sink).
+
+On the JACK side, "PulseAudio JACK Source" port (sink) gets created, and
+anything connected there will make its way to pulseaudio.
+
+
+
+Old README.md
+-------------
 
 To be spliced here later::
 
