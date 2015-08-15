@@ -8,8 +8,6 @@ import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser, dirname
 import os, sys, io, re, types, time, signal, logging, inspect
 
-import pjsua as pj
-
 
 class Conf(object):
 
@@ -26,6 +24,7 @@ class Conf(object):
     audio_jack_autostart = True
     audio_jack_server_name = ''
     audio_jack_client_name = ''
+    audio_jack_client_arg = '--jack-client-pid'
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -185,7 +184,7 @@ class PSAccountCallbacks(PSCallbacks):
 
     @err_report
     def __init__(self, server):
-        self.server, self.cbs = server, pj.AccountCallback()
+        self.server, self.cbs = server, server.pj.AccountCallback()
         self.log = get_logger()
 
     @err_report_fatal
@@ -210,14 +209,14 @@ class PSAccountCallbacks(PSCallbacks):
 
 class PSCallCallbacks(PSCallbacks):
 
-    pj_media_states = dict(
-        (v, k.lower()) for k,v in vars(pj.MediaState).viewitems() )
-
     @err_report
     def __init__(self, server, call_id, call):
         self.cbs = pj.CallCallback(call)
         self.server, self.call_id, self.call = server, call_id, call
+        self.pj_media_states = dict(
+            (v, k.lower()) for k,v in vars(server.pj.MediaState).viewitems() )
         self.log = get_logger()
+
         ci = self.call.info()
         self.call_state = ci.state_text.lower()
         self.media_state = self.pj_media_states[ci.media_state]
@@ -339,40 +338,92 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
 class JackClient(object):
     # Necessary because two libjack clients can't work from the same pid.
 
-    @classmethod
-    def run_slave(cls):
-        while True: sys.stdin.readline()
-        ### jack init
-        # import jack
-        # client_name = self.conf.audio_jack_client_name
-        # if not client_name: client_name = 'paging.{}'.format(os.getpid())
-        # self.jack = jack.Client( client_name,
-        # 	servername=self.conf.audio_jack_server_name or None,
-        # 	no_start_server=not self.conf.audio_jack_autostart )
-        # self.jack_out_hw = set()
-        # self.jack.Error = jack.JackError
-        # self.jack.set_port_registration_callback(self.init_jack_port)
-        # self.jack.activate()
-
-        # while True:
-        # 	sys.stdin.read()
-
-        # self.jack.deactivate()
-        # self.jack.close()
-        # self.jack = None
-
-
-    def __init__(self, self_exec_args):
-        args = [__file__] + list(self_exec_args)
-        if not os.access(__file__, os.X_OK):
-            args = [sys.executable or 'python'] + args
-        self.child_pid = subprocess.Popen( args,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True )
-
+    child = self_exec_args = self_exec_env = None
     jack = pj_to_jack = pj_from_jack = jack_out_hw = None
 
-    def init_jack_port( self, port, port_new=None,
-            _ev_names={True: 'new port', False: 'port removed', None: 'synthetic'} ):
+    def __init__(self, self_exec_args=None, conf=None):
+        import json
+        if self_exec_args:
+            args = self_exec_args
+            if isinstance(args, types.StringTypes): args = [args]
+            args = [__file__] + list(args)
+            if not os.access(__file__, os.X_OK):
+                args = [sys.executable or 'python'] + args
+            env = os.environ.copy()
+            env['jack_slave_conf'] = json.dumps(conf)
+            self.self_exec_args, self.self_exec_env = args, env
+        else:
+            env = os.environ.get('jack_slave_conf')
+            if env: conf = json.loads(env)
+        assert isinstance(conf, dict), conf
+        self.conf = type('Conf', (object,), conf)
+        self.log = get_logger()
+
+    @classmethod
+    def run_master(cls, args, conf):
+        self = cls(args, conf)
+        self.slave_start()
+        return self
+
+    @classmethod
+    def run_in_slave_pid(cls): return cls().run()
+
+    def slave_start(self):
+        import subprocess
+        assert not self.child and self.self_exec_args and self.self_exec_env
+        self.log.debug('Starting jack client pid: %s', ' '.join(self.self_exec_args))
+        self.child = subprocess.Popen(
+            self.self_exec_args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            env=self.self_exec_env, close_fds=True )
+        assert self.child.stdout.readline() == 'started\n'
+        # XXX: restarting child pid on failures
+
+    def slave_stop(self):
+        if self.child and self.child.poll() is not None:
+            try: self.child.kill()
+            except OSError: pass
+            self.child = None
+
+    def run(self):
+        assert not (self.self_exec_args or self.self_exec_env)
+        logging.basicConfig(
+            format='%(asctime)s :: jack-client.%(name)s %(levelname)s :: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            level=logging.DEBUG if self.conf.debug else logging.WARNING )
+
+        import jack
+        client_name = self.conf.client_name
+        if not client_name: client_name = 'paging.{}'.format(os.getpid())
+        self.jack = jack.Client( client_name,
+            servername=self.conf.server_name or None,
+            no_start_server=not self.conf.autostart )
+        self.jack_out_hw = set()
+        self.jack.Error = jack.JackError
+        self.jack.set_port_registration_callback(self.init_port)
+        self.jack.activate()
+
+        for port in self.jack.get_ports(): self.init_port(port)
+
+        for k in 'stdout', 'stderr':
+            setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
+        sys.stdout.write('started\n')
+
+        self.log.debug('jack client loop started')
+        self.running = True
+        while self.running:
+            try: cmd = sys.stdin.readline().strip()
+            except (OSError, IOError, KeyboardInterrupt): cmd = ''
+            if not cmd or cmd == 'exit': self.running = False
+            try: sys.stdout.write('ack\n')
+            except (OSError, IOError): break
+        self.log.debug('jack client loop finished')
+
+        self.jack.deactivate()
+        self.jack.close()
+
+    def init_port( self, port, port_new=None,
+            _ev_names={True: 'added', False: 'removed', None: 'synthetic'} ):
         if not port.is_audio: return
         assert port.is_input ^ port.is_output, port
 
@@ -385,6 +436,7 @@ class JackClient(object):
             else: return it.product(ps, [p])
         def set_link(p1, p2, state):
             t = 'connect' if state else 'disconnect'
+            self.log.debug('set_link %s %s %s', p1, p2, t)
             try: getattr(self.jack, t)(p1, p2)
             except self.jack.Error as err:
                 err = bytes(err)
@@ -401,7 +453,7 @@ class JackClient(object):
                 conns_check.update(get_conn_tuples())
             ## New hw output ports
             if port.is_input and p != self.pj_from_jack\
-                    and re.search(self.conf.audio_jack_output_port, p):
+                    and re.search(self.conf.out_ports, p):
                 self.jack_out_hw.add(p)
                 if self.pj_to_jack: conns_check.add((self.pj_to_jack, p))
             ## New music ports
@@ -411,8 +463,6 @@ class JackClient(object):
         for p1, p2 in conns_check:
             if p2 == self.pj_from_jack: set_link(p1, p2, False)
             elif p1 == self.pj_to_jack: set_link(p1, p2, p2 in self.jack_out_hw)
-
-
 
 
 class PagingServerError(Exception): pass
@@ -428,6 +478,8 @@ class PagingServer(object):
 
     @err_report
     def __init__(self, conf, sd_cycle=None):
+        import pjsua as pj # should not be imported together with jack-client
+        self.pj = pj
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
 
@@ -472,8 +524,7 @@ class PagingServer(object):
             self.pj_out_port = m['id']
             self.log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
 
-        # XXX: jack init
-
+        self.jack.slave_start()
 
     @err_report_fatal
     def init(self):
@@ -481,31 +532,37 @@ class PagingServer(object):
 
         self.log.debug('jack init')
 
-        # XXX: jack init
+        jack_client_conf = dict(
+            debug=self.conf.server_debug,
+            out_ports=self.conf.audio_jack_output_port,
+            autostart=self.conf.audio_jack_autostart,
+            server_name=self.conf.audio_jack_server_name,
+            client_name=self.conf.audio_jack_client_name )
+        self.jack = JackClient(self.conf.audio_jack_client_arg, jack_client_conf)
 
         self.log.debug('pjsua init')
 
         # Before logging is configured, pjsua prints some init info to plain stderr fd
         # Unless there's a good reason to see this, like debugging early crashes,
         #  there should be no need to have this exception, hence the "suppress" hack
-        with suppress_streams('stdout'): self.lib = lib = pj.Lib()
+        with suppress_streams('stdout'): self.lib = lib = self.pj.Lib()
 
-        conf_ua = pj.UAConfig()
+        conf_ua = self.pj.UAConfig()
         conf_ua.max_calls = 10
         conf_ua.user_agent = ( 'PagingServer/git'
             ' (+https://github.com/AccelerateNetworks/PagingServer)' )
-        conf_media = pj.MediaConfig()
+        conf_media = self.pj.MediaConfig()
 
         conf_log = lambda level,msg,n,\
             log=get_logger('pjsua'): log.debug(msg.strip().split(None,1)[-1])
-        conf_log = pj.LogConfig(level=self.conf.server_pjsua_log_level, callback=conf_log)
+        conf_log = self.pj.LogConfig(level=self.conf.server_pjsua_log_level, callback=conf_log)
 
         lib.init(conf_ua, conf_log, conf_media)
 
         # lib.start(with_thread=False) doesn't work well with python code
-        transport = lib.create_transport(pj.TransportType.UDP)
+        transport = lib.create_transport(self.pj.TransportType.UDP)
         lib.start(with_thread=True)
-        lib.c = pj._pjsua
+        lib.c = self.pj._pjsua
 
     @err_report_fatal
     def destroy(self):
@@ -516,7 +573,7 @@ class PagingServer(object):
         self.lib = None
 
         self.log.debug('jack cleanup')
-        # XXX: jack cleanup
+        self.jack.slave_stop()
 
     def __enter__(self):
         self.init()
@@ -530,7 +587,7 @@ class PagingServer(object):
         assert self.lib, 'Must be initialized before run()'
         self.init_outputs()
 
-        acc = self.lib.create_account(pj.AccountConfig(
+        acc = self.lib.create_account(self.pj.AccountConfig(
             *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) ))
         acc.set_callback(PSAccountCallbacks(self))
 
@@ -609,7 +666,7 @@ def main(args=None, defaults=None):
 
     # Running jack client in the same pid as pjsua doesn't work correctly.
     # This is likely because of global state in libjack with two clients from same pid.
-    if '--jack-client-pid' in args: return jack_client()
+    if defaults.audio_jack_client_arg in args: return JackClient.run_in_slave_pid()
 
     import argparse
     parser = argparse.ArgumentParser(
@@ -774,6 +831,7 @@ def main(args=None, defaults=None):
         except (PSConfigurationError, PSAuthError) as err:
             print('ERROR [{}]: {}'.format(err.__class__.__name__, err), file=sys.stderr)
             return 1
+        except KeyboardInterrupt: pass
     log.info('Finished')
 
 if __name__ == '__main__': sys.exit(main())
