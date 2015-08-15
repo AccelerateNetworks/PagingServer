@@ -207,10 +207,35 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   Related configuration options:
 
   * klaxon
+  * jack-music-client-name
+  * jack-music-links
 
-  Described in `paging.example.conf`_.
+  "klaxon" can be a path to any file that has sound in it (that ffmpeg would
+  understand), and will be played before each announcement call on all
+  "jack-output-ports" (see below), and before that call gets answered.
 
-  Music player integration stuff should be here, when implemented.
+  "jack-music-client-name" should be a regexp to match outputs of music clients,
+  that should play stuff in-between announcements, and "jack-music-links" allows
+  to control which set(s) of speakers they'll be connected to.
+
+  For example, if mpd.conf has something like this::
+
+    audio_output {
+      type "jack"
+      name "jack"
+      client_name "mpd.paging:test"
+    }
+
+  Then configuration like this (these are actually defaults)::
+
+    jack-music-client-name = ^mpd\.paging:(.*)$
+    jack-music-links = left---left right---right
+
+  Will connect output from that player to all speakers matched by
+  "jack-output-ports" (all available to JACK by default).
+
+  See more detailed description of these options and how they're interpreted in
+  `paging.example.conf`_.
 
 
 * List of hardware outputs (ALSA PCMs) to use as JACK final outputs/sinks.
