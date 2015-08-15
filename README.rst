@@ -234,6 +234,9 @@ Hence audio configuration can be roughly divided into these sections (at the mom
   Will connect output from that player to all speakers matched by
   "jack-output-ports" (all available to JACK by default).
 
+  Script can be run with ``--dump-jack-ports`` option to show all JACK ports
+  that are currently available - all connected players, speakers, cards and such.
+
   See more detailed description of these options and how they're interpreted in
   `paging.example.conf`_.
 

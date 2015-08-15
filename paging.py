@@ -651,16 +651,6 @@ class PagingServer(object):
         return dict( (n, dict_with(vars(dev), id=n))
             for n, dev in enumerate(self.lib.enum_snd_dev()) )
 
-    def get_jack_out_ports(self, name_re=''):
-        ports = dict()
-        for p in self.jack.get_ports(name_re, is_audio=True, is_input=True):
-            port = dict()
-            for k in dir(p):
-                if k not in ['name', 'uuid']: continue
-                port[k] = getattr(p, k)
-            ports[port['name']] = port
-        return ports
-
     def conf_port_connect(self, conf_port):
         self.lib.conf_connect(conf_port, self.pj_out_port)
 
@@ -731,7 +721,7 @@ def main(args=None, defaults=None):
     group.add_argument('--dump-pjsua-conf-ports', action='store_true',
         help='Dump the list of conference ports that pjsua creates after init and exit.')
     group.add_argument('--dump-jack-ports', action='store_true',
-        help='Dump the list of jack output ports that are available.')
+        help='Dump the list of jack input/output ports that are available.')
     group.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file from pjsua output and exit.'
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
@@ -835,9 +825,20 @@ def main(args=None, defaults=None):
         return
 
     if opts.dump_jack_ports:
-        with server_ctx as server:
-            ports = server.get_jack_out_ports()
-            pprint_infos(ports, 'Detected jack output ports')
+        import jack
+        client = jack.Client( 'port-list',
+            servername=conf.audio_jack_server_name or None,
+            no_start_server=not conf.audio_jack_autostart )
+        ports = dict()
+        for p in client.get_ports(is_audio=True):
+            port = dict()
+            for k in dir(p):
+                if k not in ['name', 'uuid']: continue
+                port[k] = getattr(p, k)
+            port['type'] = 'input (player or other sound source)'\
+                if p.is_output else 'output (speakers, audio card or such)'
+            ports[port['name']] = port
+        pprint_infos(ports, 'Detected jack ports')
         return
 
     if opts.test_audio_file:
