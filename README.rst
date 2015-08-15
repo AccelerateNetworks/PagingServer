@@ -10,9 +10,9 @@ Main component of this project is a script to run PJSUA_ SIP client connected to
 a JACK_ sound server routing audio to whatever sound cards and speaker sets.
 
 It picks up calls, plays klaxon on speakers, followed by the announcement made
-in that call.
+in that call. Music plays in-between announcements.
 
-Script controls both PJSUA and JACK to make them work to that effect.
+Script controls PJSUA and JACK to make them work to that effect.
 
 
 .. contents::
@@ -263,10 +263,10 @@ Requirements
   shipped .service file).
 
   Developed and shipped separately from main systemd package since v223
-  (2015-07-29), likely come installed with systemd prior to that.
+  (2015-07-29), likely comes installed with systemd prior to that.
 
-  Would probably make sense to install these from OS package, which should be
-  available if systemd is used there as init by default.
+  Would probably make sense to install that module from OS package, which should
+  be available if systemd is used there as init by default.
 
 * (optional) `raven python module`_ - for reporting any errors via sentry.
 

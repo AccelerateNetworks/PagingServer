@@ -278,6 +278,7 @@ def pprint_conf(conf, title=None):
         if isinstance(v, bool): v = ['no', 'yes'][v]
         print('{} = {}'.format(m.group(2), v))
 
+
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     import subprocess, hashlib, base64, tempfile, atexit
     self = ffmpeg_towav
@@ -335,6 +336,85 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     return dst_path
 
 
+class JackClient(object):
+    # Necessary because two libjack clients can't work from the same pid.
+
+    @classmethod
+    def run_slave(cls):
+        while True: sys.stdin.readline()
+        ### jack init
+        # import jack
+        # client_name = self.conf.audio_jack_client_name
+        # if not client_name: client_name = 'paging.{}'.format(os.getpid())
+        # self.jack = jack.Client( client_name,
+        # 	servername=self.conf.audio_jack_server_name or None,
+        # 	no_start_server=not self.conf.audio_jack_autostart )
+        # self.jack_out_hw = set()
+        # self.jack.Error = jack.JackError
+        # self.jack.set_port_registration_callback(self.init_jack_port)
+        # self.jack.activate()
+
+        # while True:
+        # 	sys.stdin.read()
+
+        # self.jack.deactivate()
+        # self.jack.close()
+        # self.jack = None
+
+
+    def __init__(self, self_exec_args):
+        args = [__file__] + list(self_exec_args)
+        if not os.access(__file__, os.X_OK):
+            args = [sys.executable or 'python'] + args
+        self.child_pid = subprocess.Popen( args,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True )
+
+    jack = pj_to_jack = pj_from_jack = jack_out_hw = None
+
+    def init_jack_port( self, port, port_new=None,
+            _ev_names={True: 'new port', False: 'port removed', None: 'synthetic'} ):
+        if not port.is_audio: return
+        assert port.is_input ^ port.is_output, port
+
+        p, p_remove, conns_check = bytes(port.name), port_new is False, set()
+        self.log.debug('jack port registration event - %s: %s', _ev_names[port_new], p)
+
+        def get_conn_tuples():
+            ps = map(op.attrgetter('name'), self.jack.get_all_connections(p))
+            if port.is_output: return it.product([p], ps)
+            else: return it.product(ps, [p])
+        def set_link(p1, p2, state):
+            t = 'connect' if state else 'disconnect'
+            try: getattr(self.jack, t)(p1, p2)
+            except self.jack.Error as err:
+                err = bytes(err)
+                if not re.search(r'already exists$', err):
+                    self.log.debug('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
+
+        if not p_remove:
+            ## New PortAudio ports
+            if re.search(r'^PortAudio:', p):
+                if port.is_input: self.pj_from_jack = p
+                else:
+                    self.pj_to_jack = p
+                    conns_check.update(it.product([p], self.jack_out_hw))
+                conns_check.update(get_conn_tuples())
+            ## New hw output ports
+            if port.is_input and p != self.pj_from_jack\
+                    and re.search(self.conf.audio_jack_output_port, p):
+                self.jack_out_hw.add(p)
+                if self.pj_to_jack: conns_check.add((self.pj_to_jack, p))
+            ## New music ports
+            # XXX: jack-music-client-regexp
+        elif p in self.jack_out_hw: self.jack_out_hw.remove(p)
+
+        for p1, p2 in conns_check:
+            if p2 == self.pj_from_jack: set_link(p1, p2, False)
+            elif p1 == self.pj_to_jack: set_link(p1, p2, p2 in self.jack_out_hw)
+
+
+
+
 class PagingServerError(Exception): pass
 
 class PSConfigurationError(PagingServerError): pass
@@ -344,8 +424,7 @@ class PSAuthError(PagingServerError): pass
 
 class PagingServer(object):
 
-    lib = jack = None
-    pj_out_dev = pj_out_port = jack_in = jack_out = None
+    lib = pj_out_dev = pj_out_port = None
 
     @err_report
     def __init__(self, conf, sd_cycle=None):
@@ -384,53 +463,25 @@ class PagingServer(object):
             m, spec = self.get_pj_out_devs(), self.conf.audio_pjsua_device
             m = self.match_info(m, spec, 'output device')
             self.pj_out_dev = m['id']
-            log.debug('Using output device: %s [%s]', m['name'], self.pj_out_dev)
+            self.log.debug('Using output device: %s [%s]', m['name'], self.pj_out_dev)
             self.lib.set_snd_dev(self.pj_out_dev, self.pj_out_dev)
 
         if self.pj_out_port is None:
             m, spec = self.get_pj_conf_ports(), self.conf.audio_pjsua_conf_port
             m = self.match_info(m, spec, 'conference output port')
             self.pj_out_port = m['id']
-            log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
+            self.log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
 
-        portaudio_jacks = self.jack.get_ports(r'^PortAudio:', is_audio=True)
-        portaudio_jacks = map( lambda p: len(p) == 1 and bytes(p[0].name),
-            (filter(op.attrgetter(k), portaudio_jacks) for k in ['is_output', 'is_input']) )
-        assert all(portaudio_jacks), portaudio_jacks
-        self.jack_in, self.jack_out = portaudio_jacks
-
-        # Connect pj -> hw jacks
-        jacks_conns = set(map(
-            op.attrgetter('name'), self.jack.get_all_connections(self.jack_in) ))
-        jacks_out = self.get_jack_out_ports(self.conf.audio_jack_output_port)
-        for p in jacks_out.viewkeys():
-            if p == self.jack_out: continue
-            if p in jacks_conns:
-                jacks_conns.remove(p)
-                continue
-            self.jack.connect(self.jack_in, p)
-        for p in jacks_conns: self.jack.disconnect(self.jack_in, p)
-
-        # Disconnect * -> pj jacks, just in case
-        jacks_conns = set(map(
-            op.attrgetter('name'), self.jack.get_all_connections(self.jack_out) ))
-        for p in jacks_conns: self.jack.disconnect(p, self.jack_out)
+        # XXX: jack init
 
 
     @err_report_fatal
     def init(self):
-        assert not (self.lib or self.jack)
+        assert not self.lib
 
         self.log.debug('jack init')
 
-        import jack
-        client_name = self.conf.audio_jack_client_name
-        if not client_name: client_name = 'paging.{}'.format(os.getpid())
-        self.jack = jack.Client( client_name,
-            servername=self.conf.audio_jack_server_name or None,
-            no_start_server=not self.conf.audio_jack_autostart )
-        self.jack.activate()
-        self.jack.Error = jack.JackError
+        # XXX: jack init
 
         self.log.debug('pjsua init')
 
@@ -451,8 +502,9 @@ class PagingServer(object):
 
         lib.init(conf_ua, conf_log, conf_media)
 
+        # lib.start(with_thread=False) doesn't work well with python code
         transport = lib.create_transport(pj.TransportType.UDP)
-        lib.start(with_thread=False)
+        lib.start(with_thread=True)
         lib.c = pj._pjsua
 
     @err_report_fatal
@@ -464,9 +516,7 @@ class PagingServer(object):
         self.lib = None
 
         self.log.debug('jack cleanup')
-        self.jack.deactivate()
-        self.jack.close()
-        self.jack = None
+        # XXX: jack cleanup
 
     def __enter__(self):
         self.init()
@@ -485,7 +535,7 @@ class PagingServer(object):
         acc.set_callback(PSAccountCallbacks(self))
 
         self.running = True
-        log.debug('pjsua event loop started')
+        self.log.debug('pjsua event loop started')
         while True:
             if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
             else:
@@ -495,9 +545,9 @@ class PagingServer(object):
                     self.sd_cycle(ts)
                     continue
             if not (self.running and self.lib): break
-            self.lib.handle_events(int(max_poll_delay * 1000)) # timeout in ms!
+            time.sleep(max_poll_delay)
             if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
-        log.debug('pjsua event loop has been stopped')
+        self.log.debug('pjsua event loop has been stopped')
 
     def stop(self): self.running = False
 
@@ -555,7 +605,11 @@ class PagingServer(object):
 
 
 def main(args=None, defaults=None):
-    defaults = defaults or Conf()
+    args, defaults = sys.argv[1:] if args is None else args, defaults or Conf()
+
+    # Running jack client in the same pid as pjsua doesn't work correctly.
+    # This is likely because of global state in libjack with two clients from same pid.
+    if '--jack-client-pid' in args: return jack_client()
 
     import argparse
     parser = argparse.ArgumentParser(
@@ -607,7 +661,7 @@ def main(args=None, defaults=None):
         help='Use Sentry to capture errors/logging using "raven" module.'
             ' Default: {}'.format(defaults.server_sentry_dsn))
 
-    opts = parser.parse_args(sys.argv[1:] if args is None else args)
+    opts = parser.parse_args(args)
 
     global log
     log = '%(name)s %(levelname)s :: %(message)s'
