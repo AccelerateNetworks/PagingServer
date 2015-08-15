@@ -208,6 +208,7 @@ class PSAccountCallbacks(PSCallbacks):
         # XXX: SIP events, watchdog calls should be ran while this happens
         #  but shouldn't be a problem if klaxon is no more than a few seconds long
         # XXX: delay if another call is currently active
+        self.server.set_music_mute(True)
         self.server.wav_play_sync(self.server.conf.audio_klaxon)
         call.answer()
 
@@ -215,7 +216,7 @@ class PSCallCallbacks(PSCallbacks):
 
     @err_report
     def __init__(self, server, call_id, call):
-        self.cbs = pj.CallCallback(call)
+        self.cbs = server.pj.CallCallback(call)
         self.server, self.call_id, self.call = server, call_id, call
         self.pj_media_states = dict(
             (v, k.lower()) for k,v in vars(server.pj.MediaState).viewitems() )
@@ -239,6 +240,7 @@ class PSCallCallbacks(PSCallbacks):
         self.log.debug(
             'call [%s] state change: %r -> %r (SIP status: %s %s)',
             self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
+        if self.call_state == 'disconnctd': self.server.set_music_mute(False)
 
     @err_report
     def on_media_state(self, _state_dict=dict()):
@@ -389,6 +391,11 @@ class JackClient(object):
             except OSError: pass
             self.child = None
 
+    def set_music_mute(self, state):
+        self.child.stdin.write('{}\n'.format('+-'[bool(state)]))
+        self.child.stdin.flush()
+        assert self.child.stdout.readline() == 'ack\n'
+
     def run(self):
         assert not (self.self_exec_args or self.self_exec_env)
         logging.basicConfig(
@@ -397,7 +404,7 @@ class JackClient(object):
             level=logging.DEBUG if self.conf.debug else logging.WARNING )
 
         self.jack_out_hw, self.mpds = set(), dict()
-        self.mpd_links = list()
+        self.mpd_links, self.mpd_mute = list(), False
         for mpd_link in self.conf.mpd_links.split():
             try: p_mpd, p_out = mpd_link.split('---', 1)
             except ValueError:
@@ -426,7 +433,11 @@ class JackClient(object):
         while self.running:
             try: cmd = m2s.readline().strip()
             except (OSError, IOError, KeyboardInterrupt): cmd = ''
+            self.log.debug('jack command: %r', cmd)
             if not cmd or cmd == 'exit': self.running = False
+            elif cmd in ['+', '-']:
+                self.mpd_mute = bool('+-'.find(cmd))
+                map(self.init_port, self.mpds)
             try: s2m.write('ack\n')
             except (OSError, IOError): break
         self.log.debug('jack client loop finished')
@@ -436,6 +447,10 @@ class JackClient(object):
 
     def init_port( self, port, port_new=None,
             _ev_names={True: 'added', False: 'removed', None: 'synthetic'} ):
+        if isinstance(port, types.StringTypes):
+            p, port = port, self.jack.get_ports(re.escape(port))
+            if len(port) != 1: raise LookupError(p, port)
+            port, = port
         if not port.is_audio: return
         assert port.is_input ^ port.is_output, port
 
@@ -451,10 +466,10 @@ class JackClient(object):
             t = 'connect' if state else 'disconnect'
             self.log.debug('set_link %s %s %s', p1, p2, t)
             try: getattr(self.jack, t)(p1, p2)
-            except self.jack.Error as err:
-                err = bytes(err)
-                if not re.search(r'already exists$', err):
-                    self.log.debug('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
+            except self.jack.Error as err: pass # failures here seem to be lies, client sucks
+                # err = bytes(err)
+                # if not re.search(r'already exists$', err):
+                # 	self.log.debug('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
 
         if not p_remove:
             ## New PortAudio ports
@@ -492,7 +507,8 @@ class JackClient(object):
             if p2 == self.pj_from_jack: state = False
             elif p1 == self.pj_to_jack: state = p2 in self.jack_out_hw
             elif p1 in self.mpds:
-                state = any(re_out.search(p2) for re_out in self.mpds[p1])
+                state = not self.mpd_mute\
+                    and any(re_out.search(p2) for re_out in self.mpds[p1])
             if state is not None: set_link(p1, p2, state)
 
 
@@ -653,6 +669,9 @@ class PagingServer(object):
 
     def conf_port_connect(self, conf_port):
         self.lib.conf_connect(conf_port, self.pj_out_port)
+
+    def set_music_mute(self, state):
+        self.jack.set_music_mute(state)
 
 
     @contextmanager
