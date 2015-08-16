@@ -63,7 +63,7 @@ Aka simple non-forking start.
 
 Just run the thing as::
 
-  paging
+  % paging
 
 Can be used directly from terminal, or with any init system or daemon manager,
 including systemd, upstart, openrc, runit, daemontools, debian's
@@ -74,9 +74,9 @@ For systemd in particular, see the "Running as a systemd service" section below.
 Running from terminal to understand what's going on, these options might be also
 useful::
 
-  paging --debug
-  paging --debug --pjsua-log-level 10
-  paging --dump-conf
+  % paging --debug
+  % paging --debug --pjsua-log-level 10
+  % paging --dump-conf
 
 See also "Installation" and "Audio configuration" sections below.
 
@@ -84,9 +84,63 @@ See also "Installation" and "Audio configuration" sections below.
 Running as a systemd service
 ````````````````````````````
 
-TODO
+This method should be preferred, as it correctly notifies init when service is
+actually ready (i.e. pjsua inputs/outputs initialized), so that others can be
+scheduled around that, and primes watchdog timer, detecting if/when app might
+hang due to some bug.
 
+Provided ``paging.service`` file (in the repository, just an ini file) should be
+installed to ``/etc/systemd/system``, and assumes following things::
 
+* PagingServer app should be run as a "paging" user, which exists on the system
+  (e.g. in ``/etc/passwd``).
+
+* "paging.py" script, its "entry point" or symlink to it is installed at
+  ``/usr/local/bin/paging``.
+
+* Configuration file can be read from one of default paths
+  (see above for a list of these).
+
+* Optional `python-systemd`_ module dependency is installed.
+
+With all these correct, service can then be used like this::
+
+* Start/stop/restart service::
+
+    % systemctl start paging
+    % systemctl stop paging
+    % systemctl restart paging
+
+* Enable service to start on OS boot: ``systemctl enable paging``
+
+* See if service is running, show last log entries: ``systemctl status paging``
+* Show all logging for service since last OS boot: ``journalctl -ab -u paging``
+
+* Brutally kill service if it hangs on stop/restart:
+  ``systemctl kill -s KILL paging``
+  (will be done after ~60s by systemd automatically).
+
+If either app itself is installed to another location (not
+``/usr/local/bin/paging``) or extra command-line parameters for it are required,
+``ExecStart=`` line can be altered either in installed systemd unit file
+directly, or via ``systemctl edit paging`` (see systemctl(1) manpage for this
+command/option).
+
+``systemctl daemon-reload`` should be run for any modifications to
+``/etc/systemd/system/paging.service`` to take effect.
+
+Similarly, ``User=paging`` line can be altered or overidden to change system uid
+to use for the app.
+
+If python-systemd module is unavailable, following lines should be dropped from
+the ``paging.service``::
+
+  Type=notify
+  WatchdogSec=...
+
+And ``--systemd`` option removed from ``ExecStart=`` line, so that app would be
+started as a simple non-forking process, which will then be treated correctly by
+systemd without two options above.
 
 
 
@@ -499,8 +553,8 @@ removed.
     ### or
     % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.example.conf
 
-  Edit file as necessary (see comments there and configuration-related info in
-  this README), and put it to ``/etc/paging.conf`` (requires root privileges)::
+  Edit file as necessary (see comments there and usage/configuration-related
+  info in this README), and put it to ``/etc/paging.conf`` (requires root privileges)::
 
     % nano paging.example.conf
     % install -o root -g paging -m640 -T paging.example.conf /etc/paging.conf
@@ -532,7 +586,110 @@ removed.
 * Configure system to run PagingServer and jackd on boot and start these as
   system services.
 
-  TODO: systemd stuff here, some notes on same process for SysV init.
+  Most linux distros these days run systemd as an init (pid-1), so instructions
+  below are more detailed for that scenario.
+
+  * With systemd as os init.
+
+    TODO: install python-systemd here
+
+    Get systemd unit files for paging.service and jack@.service from the github
+    repository and install these to ``/etc/systemd/system`` directory::
+
+      % cd /etc/systemd/system
+
+      % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.service
+      % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/jack@.service
+
+      ### or
+
+      % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.service
+      % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/jack@.service
+
+    Note that both .service files assume that app will be run with the user and
+    paths (config, script symlink) from the steps above, and should be changed
+    if other uid/paths should be used.
+
+    See "Running as a systemd service" (under "Usage") for more details on
+    contents and editing of these files.
+
+    Start both services::
+
+      % systemctl start jack@paging paging
+
+    Verify that both were started and are running correctly::
+
+      % systemctl status jack@paging paging
+
+      ● jack@paging.service
+         Loaded: loaded (/etc/systemd/system/jack@.service; disabled)
+         Active: active (running) since Sun 2015-08-16 08:20:28 EDT; 3min 32s ago
+      ...
+
+      ● paging.service
+         Loaded: loaded (/etc/systemd/system/paging.service; disabled)
+         Active: active (running) since Sun 2015-08-16 08:20:30 EDT; 3min 30s ago
+      ...
+
+    If there were any errors logged, last 10 lines of these should be presented
+    in the "status" command output above,
+
+    | ``journalctl -ab`` command can be used to see all combined logging produced
+    | by system services since boot, and ``journalctl -ab -u paging`` can further
+    | limit that to a single unit (to e.g. see error tracebacks there).
+    | ``journalctl -af`` can be used to continously follow what is being logged
+    | (like ``tail -f`` for all system logs), optionally with same "-u" option.
+
+    At any point, these services can be stopped/started/restarted using
+    "systemctl" command, as described in more detail in "Usage" section.
+
+    Enable JACK and PagingServer to start on OS boot::
+
+      % systemctl enable jack@paging paging
+
+      Created symlink from ... to /etc/systemd/system/jack@.service.
+      Created symlink from ... to /etc/systemd/system/paging.service.
+
+    This will make both services start automatically on system boot from now on.
+
+    Note that "systemctl enable" won't start the services right away, "start"
+    can be used to do that separately.
+
+    Verify or check whether paging.service and jack@paging.service are enabled
+    to start on boot::
+
+      % systemctl is-enabled jack@paging paging
+      enabled
+      enabled
+
+    There should be one "enabled" message for each.
+
+  * With SysV init (``/etc/init.d/`` scripts) or any other init system.
+
+    Both commands from ``ExecStart=...`` lines in paging.service and
+    jack@.service in the github repository should be scheduled to run on boot as
+    specific user (e.g. "paging") and "backgrounded".
+
+    From any sh/bash script (running as root) it's fairly easy to do this by
+    adding the following lines::
+
+      sudo -u paging -- setsid paging &
+      disown
+      sudo -u paging -- setsid jackd --nozombies --no-realtime -d dummy
+      disown
+
+    On many "classical" sysvinit/rc.d systems it can be done by adding these to
+    /etc/rc.local, or creating a separate initscript for these in
+    ``/etc/init.d`` or ``/etc/rc.d``.
+
+    Other init systems like openrc, runit, upstart can have their own ways to
+    achieve same results, which should be fairly trivial to configure by
+    following their docs.
+
+  With this step completed, PagingServer should be starting properly after
+  reboot, which is a good idea to test by rebooting the machine, to avoid future
+  surprises, if that is possible/acceptable for a particular server where it is
+  installed.
 
 
 If anything in the steps above is unclear, misleading or does not work, and can

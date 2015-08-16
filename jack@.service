@@ -1,0 +1,10 @@
+[Service]
+User=%I
+ExecStart=/usr/bin/env jackd --nozombies --no-realtime -d dummy
+
+Restart=always
+StartLimitInterval=10s
+StartLimitBurst=5
+
+[Install]
+WantedBy=mutli-user.target

@@ -1,17 +1,18 @@
 [Unit]
-After=network-online.target
+After=network-online.target jack@paging.service
 Wants=network-online.target
 
 [Service]
 Type=notify
 WatchdogSec=30
+
 Restart=always
 RestartSec=30
 StartLimitInterval=10min
 StartLimitBurst=10
 
 User=paging
-ExecStart=/opt/bin/paging.py --systemd
+ExecStart=/usr/local/bin/paging --systemd
 
 [Install]
 WantedBy=multi-user.target
