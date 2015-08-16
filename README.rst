@@ -1,9 +1,6 @@
 PagingServer
 ============
 
-**WARNING: project is in early stages of development and not suitable for
-any kind of general usage yet**
-
 SIP-based Announcement / PA / Paging / Public Address Server system.
 
 Main component of this project is a script to run PJSUA_ SIP client connected to
@@ -103,7 +100,7 @@ installed to ``/etc/systemd/system``, and assumes following things:
 
 * Optional `python-systemd`_ module dependency is installed.
 
-With all these correct, service can then be used like this::
+With all these correct, service can then be used like this:
 
 * Start/stop/restart service::
 
@@ -120,11 +117,12 @@ With all these correct, service can then be used like this::
   ``systemctl kill -s KILL paging``
   (will be done after ~60s by systemd automatically).
 
+See `systemctl(1) manpage`_ for more info on such commands.
+
 If either app itself is installed to another location (not
 ``/usr/local/bin/paging``) or extra command-line parameters for it are required,
 ``ExecStart=`` line can be altered either in installed systemd unit file
-directly, or via ``systemctl edit paging`` (see systemctl(1) manpage for this
-command/option).
+directly, or via ``systemctl edit paging``.
 
 ``systemctl daemon-reload`` should be run for any modifications to
 ``/etc/systemd/system/paging.service`` to take effect.
@@ -249,7 +247,7 @@ removed.
 
       apt-get install --no-install-recommends jackd1
 
-    Note ``--no-install-recommends`` flag, which should prevent Debian from
+    Note the ``--no-install-recommends`` flag, which should prevent Debian from
     installing "recommended" GUI packages and X11 server for these.
     None of them are needed or helpful, hence that option here.
 
@@ -414,7 +412,7 @@ removed.
   created for it (from a root user), along with home directory, where all app
   files will reside::
 
-    % useradd -d /srv/paging paging
+    % useradd -d /srv/paging -s /bin/bash paging
     % mkdir -p -m700 ~paging
     % chown -R paging: ~paging
 
@@ -440,7 +438,6 @@ removed.
   Create python virtualenv for installing the app there::
 
     % virtualenv --clear --system-site-packages --python=python2.7 PagingServer
-    % exec bash
     % cd PagingServer
     % . bin/activate
 
@@ -595,7 +592,94 @@ removed.
 
   * With systemd as os init.
 
-    TODO: install python-systemd here
+    Install python-systemd for python 2.7:
+
+    * Arch Linux: ``pacman -S python2-systemd``
+
+    * Debian **Jessie**:
+
+      At least as of now (2015-08-16), there's no prebuilt bindings package for
+      python 2.7, which was dropped due to maintainer decision, given that
+      nothing (yet) in debian depended on it.
+
+      Rebuild "systemd" packages manually with python2 instead of python3::
+
+        % apt-get install packaging-dev python-lxml
+        % apt-get build-dep systemd
+
+        % apt-get source systemd
+        % cd systemd-215
+
+        % mv debian/python{3,}-systemd.install
+        % sed -i \
+          -e 's/python3/python2/' \
+          -e 's/--without-python/--with-python/' \
+          debian/rules
+        % sed -i \
+          -e 's/python3-all-dev/python-dev/' \
+          -e 's/python3-lxml/python-lxml/' \
+          -e 's/python3-systemd/python-systemd/' \
+          -e 's/python3:Depends/python:Depends/' \
+          -e 's/Python 3/Python 2/' \
+          debian/control
+        ### last two "sed" commands above are both one-liners,
+        ###  wrapped for readability
+
+        % fakeroot debian/rules binary
+        ### this might take a while...
+
+        % apt-get markauto python-lxml \
+          $( apt-cache showsrc systemd | sed -e \
+            '/Build-Depends/!d;s/Build-Depends: \|,\|([^)]*),*\|\[[^]]*\]//g' )
+        ### also all on one line
+
+        % apt-get remove packaging-dev
+        % apt-get autoremove
+
+        % dpkg -i ../python-systemd_215-17+deb8u1_amd64.deb
+
+      If that doesn't work for whatever reason, and the installed OS arch is
+      x86_64 (amd64), then there's also an option to try the package I've built
+      directly::
+
+        % wget http://fraggod.net/static/mirror/packages/python-systemd_215-17%2bdeb8u1_amd64.deb
+
+        % sha256sum python-systemd_215-17+deb8u1_amd64.deb
+        02fbec7a120ab2597a784df44cfa85d31aacbdf725782bb3413436702babe955 ...
+        ### ^^^ make sure sha256sum of the downloaded package matches that ^^^
+
+        % dpkg -i python-systemd_215-17+deb8u1_amd64.deb
+
+      Should likely work on any Debian Jessie, even with any of the later
+      systemd patchsets (i.e. beyond 17).
+
+      Otherwise it should be fine to just drop the ``--systemd`` option (and
+      associated stuff) from the paging.service file.
+
+      See "Running as a systemd service" in the "Usage" section for more details
+      on how to do that.
+
+    * For Debian Sid or any other distro, either:
+
+      * Install from distro package repositories, if available (recommended).
+
+      * Install into virtualenv (setup in one of the previous steps) from
+        python-systemd_ repository directly::
+
+          % su - paging
+          % . PagingServer/bin/activate
+          % pip install git+https://github.com/systemd/python-systemd
+          % exit
+
+        Separate python-systemd bindings are only available starting from
+        systemd-223 (when they were split), so it might not work for earlier
+        systemd versions.
+
+    If systemd python bindings are going to be used, make sure that they can be
+    imported from python2::
+
+      % python2 -c 'import systemd.daemon; print systemd.daemon.__version__'
+      215
 
     Get systemd unit files for paging.service and jack@.service from the github
     repository and install these to ``/etc/systemd/system`` directory::
@@ -644,13 +728,14 @@ removed.
     If there were any errors logged, last 10 lines of these should be presented
     in the "status" command output above,
 
-    | ``journalctl -ab`` command can be used to see all combined logging produced
-    | by system services since boot, and ``journalctl -ab -u paging`` can further
-    | limit that to a single unit (to e.g. see error tracebacks there).
-    | ``journalctl -af`` can be used to continously follow what is being logged
-    | (like ``tail -f`` for all system logs), optionally with same "-u" option.
+    ``journalctl -ab`` command can be used to see all combined logging produced
+    by system services since boot, and ``journalctl -ab -u paging`` can further
+    limit that to a single unit (to e.g. see error tracebacks there).
 
-    At any point, these services can be stopped/started/restarted using
+    ``journalctl -af`` can be used to continously follow what is being logged
+    (like ``tail -f`` for all system logs), optionally with the same "-u" option.
+
+    At any point these services can be stopped/started/restarted using
     "systemctl" command, as described in more detail in "Usage" section.
 
     Enable JACK and PagingServer to start on OS boot::
@@ -659,8 +744,6 @@ removed.
 
       Created symlink from ... to /etc/systemd/system/jack@.service.
       Created symlink from ... to /etc/systemd/system/paging.service.
-
-    This will make both services start automatically on system boot from now on.
 
     Note that "systemctl enable" won't start the services right away, "start"
     can be used to do that separately.
@@ -685,10 +768,10 @@ removed.
 
       sudo -u paging -- setsid paging &
       disown
-      sudo -u paging -- setsid jackd --nozombies --no-realtime -d dummy
+      sudo -u paging -- setsid jackd --nozombies --no-realtime -d dummy &
       disown
 
-    On many "classical" sysvinit/rc.d systems it can be done by adding these to
+    On many "classic" sysvinit/rc.d systems it can be done by adding these to
     /etc/rc.local, or creating a separate initscript for these in
     ``/etc/init.d`` or ``/etc/rc.d``.
 
@@ -970,6 +1053,7 @@ To be spliced here later, if still applicable::
 .. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
 .. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
 .. _ffmpeg: http://ffmpeg.org/
+.. _systemctl(1) manpage: http://www.freedesktop.org/software/systemd/man/systemctl.html
 
 .. _pip: http://pip-installer.org/
 .. _pip2014.com: http://pip2014.com/
