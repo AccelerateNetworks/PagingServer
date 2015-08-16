@@ -11,7 +11,7 @@ except IOError: readme = ''
 setup(
 
     name = 'PagingServer',
-    version = '15.8.56',
+    version = '15.8.57',
     author = 'Dan Ryan, Mike Kazantsev',
     author_email = 'dan@seattlemesh.net, mk.fraggod@gmail.com',
     license = 'GPL-2',
@@ -47,7 +47,6 @@ setup(
     extras_require = {'sentry': ['raven']},
 
     py_modules=['paging'],
-    include_package_data = True,
 
     entry_points = {
         'console_scripts': ['paging = paging:main'] })

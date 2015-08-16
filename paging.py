@@ -760,7 +760,7 @@ def main(args=None, defaults=None):
         help='Use Sentry to capture errors/logging using "raven" module.'
             ' Default: {}'.format(defaults.server_sentry_dsn))
     group.add_argument('--version', action='version',
-        version='%(prog)s unknown (see python package version)')
+        version='%(prog)s version-unknown (see python package version)')
 
     opts = parser.parse_args(args)
 
