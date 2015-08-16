@@ -90,7 +90,7 @@ scheduled around that, and primes watchdog timer, detecting if/when app might
 hang due to some bug.
 
 Provided ``paging.service`` file (in the repository, just an ini file) should be
-installed to ``/etc/systemd/system``, and assumes following things::
+installed to ``/etc/systemd/system``, and assumes following things:
 
 * PagingServer app should be run as a "paging" user, which exists on the system
   (e.g. in ``/etc/passwd``).
@@ -233,6 +233,42 @@ removed.
   or "pip-2.7", same might apply to "virtualenv", substitute these as necessary.
 
 
+* Install JACK sound server.
+
+  JACK is very mature and widely-used project, hence is packaged for all major
+  linux distros, hence it's better to install it using distro's package manager.
+
+  There are two different forks of JACK, both are in use and maintained -
+  JACK1 (C) and JACK2 (C++).
+
+  It is recommended to install JACK1 (or simply "jack", not e.g. "jack2")
+  package, as this script is tested to work with that fork, but "jack2" should
+  likely work just as well.
+
+  * Debian/Ubuntu::
+
+      apt-get install --no-install-recommends jackd1
+
+    Note ``--no-install-recommends`` flag, which should prevent Debian from
+    installing "recommended" GUI packages and X11 server for these.
+    None of them are needed or helpful, hence that option here.
+
+    "Realtime process priority" option (which apt-get might ask) is irrelevant.
+
+  * Arch Linux: ``pacman -S jack``
+
+  * Other distros: install from distro repositories (recommended) or build it
+    (JACK1) from sources available at http://jackaudio.org/downloads/
+
+  Verify or check if already installed::
+
+    % jackd --version
+    jackd version 0.124.1 tmpdir /dev/shm protocol 25
+
+  Here versions 0.X (such as in example above) will indicate that JACK1 is
+  installed and versions 1.X for JACK2.
+
+
 * Build/install PJSIP project and its python bindings.
 
   If PJSIP (can also be called: pj, pjsip, pjproject, pjsua) packaged for your
@@ -285,15 +321,18 @@ removed.
   Build the code::
 
     % cd pjproject*
+
+    % sed -i 's/\(AC_PA_USE_.*\)=1/\1=0/' third_party/build/portaudio/os-auto.mak
+    % echo 'AC_PA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
+    % echo 'export CFLAGS += -DPA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
+
     % ./configure --prefix=/usr --enable-shared --disable-v4l2 --disable-video
     % make dep
     % make
 
-  TODO:
-
-    NO NO NO, this is WRONG, because pj* stuff will build against internal
-    portaudio without JACK, so needs --with-external-pa flag and there should be
-    a note on installing PA itself above
+  Above alterations to ``third_party/build/portaudio/os-auto.mak`` file
+  (sed and echo lines) are necessary to enable JACK support in the PortAudio
+  version bundled with pjsip.
 
   Install pjsip/pjsua libs (should be done root or via sudo):
 
@@ -366,41 +405,6 @@ removed.
 
   Last command should not give anything like "ImportError" or segmentation
   faults, and should exit cleanly with output similar to one presented above.
-
-
-* Install JACK sound server.
-
-  JACK is very mature and widely-used project, hence is packaged for all major
-  linux distros, hence it's better to install it using distro's package manager.
-
-  There are two different forks of JACK, both are in use and maintained -
-  JACK1 (C) and JACK2 (C++).
-
-  It is recommended to install JACK1 (or simply "jack", not e.g. "jack2")
-  package, as this script is tested to work with that fork, but "jack2" should
-  likely work just as well.
-
-  * Debian/Ubuntu::
-
-      apt-get install --no-install-recommends jackd1
-
-    Note ``--no-install-recommends`` flag, which should prevent Debian from
-    installing "recommended" GUI packages and X11 server for these.
-    None of them are needed or helpful, hence that option here.
-
-    "Realtime process priority" option (which apt-get might ask) is irrelevant.
-
-  * Arch Linux: ``pacman -S jack``
-
-  * Other distros: build it (JACK1) from http://jackaudio.org/downloads/
-
-  Verify or check if already installed::
-
-    % jackd --version
-    jackd version 0.124.1 tmpdir /dev/shm protocol 25
-
-  Here versions 0.X (such as in example above) will indicate that JACK1 is
-  installed and versions 1.X for JACK2.
 
 
 * Prepare environment for PagingServer, install it and its python dependency
@@ -612,6 +616,12 @@ removed.
 
     See "Running as a systemd service" (under "Usage") for more details on
     contents and editing of these files.
+
+    Make sure that jackd and/or PagingServer are not currently running
+    (especially if were started in previous steps above)::
+
+      % pkill -x jackd
+      % pkill -f paging
 
     Start both services::
 
