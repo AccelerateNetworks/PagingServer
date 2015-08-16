@@ -746,7 +746,7 @@ def main(args=None, defaults=None):
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
 
     group = parser.add_argument_group(
-        'debugging options',
+        'debugging, logging and other misc options',
         'Use these to understand more about what'
             ' is failing or going on. Can be especially useful on first runs.')
     group.add_argument('-d', '--debug',
@@ -759,6 +759,8 @@ def main(args=None, defaults=None):
     group.add_argument('--sentry-dsn', metavar='dsn',
         help='Use Sentry to capture errors/logging using "raven" module.'
             ' Default: {}'.format(defaults.server_sentry_dsn))
+    group.add_argument('--version', action='version',
+        version='%(prog)s unknown (see python package version)')
 
     opts = parser.parse_args(args)
 
