@@ -93,7 +93,455 @@ TODO
 Installation
 ------------
 
-TODO
+This is a regular package for Python 2.7 (not 3.X), but with some extra
+run-time requirements (see below), which can't be installed from PyPI.
+
+Package itself can be installed at any time using pip_, e.g. via ``pip install
+PagingServer`` (this will try to install stuff to /usr!!!).
+
+Unless you know python packaging though, please look at `pip2014.com`_, `python
+packaging tutorial`_ or documentation below for more detailed step-by-step
+instructions for both python package and other requirements.
+
+
+Requirements
+````````````
+
+* `Python 2.7`_ (NOT 3.X).
+
+* PJSUA_ (PJSIP User Agent) and its python bindings.
+
+  Can be packaged as "pjsip", "pjsua" or "pjproject" in linux distros.
+
+  Python bindings (from the same tarball) can also be packaged separately as
+  "python-pjproject" or something like that.
+
+  If either of those isn't available, be sure to build and install pjsua AND its
+  python bindings manually from the same sources, and NOT e.g. install pjsua
+  from package and then build bindings separately.
+
+* JACK_ - both JACK1 (C) and JACK2 (C++) forks should work.
+
+  Only tested with JACK1 fork, but as both have same ABI and only interacted
+  with via libjack, there should be no difference wrt which one is actually
+  running.
+
+* `JACK-Client python module`_
+
+* (optional) ffmpeg_ binary - if audio samples are not wav files (will be
+  converted on every startup, if needed).
+
+* (optional) `python-systemd`_ - only if ``--systemd`` option is used (e.g. with
+  shipped .service file).
+
+  Developed and shipped separately from main systemd package since v223
+  (2015-07-29), likely comes installed with systemd prior to that.
+
+  Would probably make sense to install that module from OS package, which should
+  be available if systemd is used there as init by default.
+
+* (optional) `raven python module`_ - for reporting any errors via sentry.
+
+
+Step-by-step installation process
+`````````````````````````````````
+
+It's recommended to follow these in roughly same order, as next ones might rely
+on stuff installed in the previous ones.
+
+Each step can be skipped entirely if "Verify or check" commands for it work,
+when packages in question were installed through some other means.
+But be sure to run at least those commands to spot any potential issues.
+
+Line prefixed by "%" are meant to be executed in the terminal with that prefix
+removed.
+
+
+* Install generic build tools and python dev packages.
+
+  Debian / Ubuntu::
+
+    % apt-get install python python-pip python-virtualenv
+
+  Arch Linux::
+
+    % pacman -S python2 python2-pip python2-virtualenv
+
+  Verify or check if already installed::
+
+    % pip --version
+    pip 1.5.6 from /usr/lib/python2.7/dist-packages (python 2.7)
+
+    % virtualenv --version
+    1.11.6
+
+  Note that on some systems, "pip" for python-2.7 might be installed as "pip2"
+  or "pip-2.7", same might apply to "virtualenv", substitute these as necessary.
+
+
+* Build/install PJSIP project and its python bindings.
+
+  If PJSIP (can also be called: pj, pjsip, pjproject, pjsua) packaged for your
+  distro (e.g. `pjproject packages for Debian Sid`_, or in AUR on Arch), it
+  might be easier to install these and avoid building them from scratch
+  entirely.
+
+  See also all the great PJSIP build/installation instructions:
+
+    | http://trac.pjsip.org/repos/wiki/Getting-Started
+    | http://trac.pjsip.org/repos/wiki/Getting-Started/Download-Source
+    | http://trac.pjsip.org/repos/wiki/Getting-Started/Build-Preparation
+    | http://trac.pjsip.org/repos/wiki/Getting-Started/Autoconf
+
+  Below in this step is just a shorter version of these.
+
+  Some operations below, such as obvious package manager invocations, and where
+  otherwise noted, should be run as "root", or can be prefixed with "sudo", if
+  necessary.
+
+  Install build-tools and python headers:
+
+  * Debian: ``apt-get install build-essential python-dev``
+  * Arch: ``pacman -S base-devel``
+
+  On source-based distros like Gentoo, gcc, headers and such are always come
+  pre-installed, so neither "build tools" nor "dev"-type extra packages are
+  necessary.
+
+  Verify or check if tools/headers are already installed::
+
+    % cc --version
+    cc (Debian 4.9.2-10) 4.9.2
+
+    % make --version
+    GNU Make 4.0
+
+    % python2-config --includes
+    -I/usr/include/python2.7 -I/usr/include/x86_64-linux-gnu/python2.7
+
+  Get the latest release of PJSIP code from http://www.pjsip.org/download.htm
+  with one of these commands (substituting newer release URL, if possible)::
+
+    % wget http://www.pjsip.org/release/2.4.5/pjproject-2.4.5.tar.bz2 && tar xf pjproject-2.4.5.tar.bz2
+    ### or
+    % curl http://www.pjsip.org/release/2.4.5/pjproject-2.4.5.tar.bz2 | tar xj
+    ### or (NOT RECOMMENDED, can be too buggy)
+    % svn export http://svn.pjsip.org/repos/pjproject/trunk pjproject
+
+  Build the code::
+
+    % cd pjproject*
+    % ./configure --prefix=/usr --enable-shared --disable-v4l2 --disable-video
+    % make dep
+    % make
+
+  TODO:
+
+    NO NO NO, this is WRONG, because pj* stuff will build against internal
+    portaudio without JACK, so needs --with-external-pa flag and there should be
+    a note on installing PA itself above
+
+  Install pjsip/pjsua libs (should be done root or via sudo):
+
+  * On Debian/Ubuntu (or similar distros)::
+
+      % apt-get install checkinstall
+      % sed -i 's/^\(\s\+\)cp -af /\1cp -r /' Makefile
+      % checkinstall -y
+
+      ...
+      **********************************************************************
+       Done. The new package has been installed and saved to
+       /root/pjproject-2.4.5/pjproject_2.4.5-1_amd64.deb
+       You can remove it from your system anytime using: dpkg -r pjproject
+      **********************************************************************
+
+      % dpkg -s pjproject
+
+      ...
+      Status: install ok installed
+      ...
+
+    This will create (via "checkinstall" tool) and cleanly install .deb package
+    to the system, making it easy to remove/update it later.
+
+    If "checkinstall" isn't your cup of tea, more generic way below should work
+    as well.
+
+  * On any random linux/unix distro::
+
+      % make install
+
+    Easy, but there's almost always a better way, that makes packaging system
+    aware of (and hence capable of managing) the installed files.
+
+  Install python pjsua bindings (should be done root or via sudo):
+
+  * On Debian/Ubuntu (or similar distros)::
+
+      % pushd pjsip-apps/src/python
+      % checkinstall -y --pkgname=python-pjsua python2 setup.py install
+      % popd
+
+    Same as above, using "checkinstall" is highly recommended on these distros.
+
+  * On any generic linux (or similar system)::
+
+      % pushd pjsip-apps/src/python
+      % python2 setup.py install
+      % popd
+
+    ``... install --user`` can be used to install package for current user only,
+    or whole step can be performed with virtualenv active to install it there.
+
+  Note that pjsua bindings are just a regular python package, and hence subject
+  to any general python package installation/management guidelines,
+  e.g. aforementioned `python packaging tutorial`_.
+
+  Verify or check if pjsip/pjproject/pjsua are all installed and can be used
+  from python::
+
+    % python2 -c 'import pjsua; lib = pjsua.Lib(); lib.init(); lib.destroy()'
+
+    04:43:41.097 os_core_unix.c !pjlib 2.4.5 for POSIX initialized
+    04:43:41.097 sip_endpoint.c  .Creating endpoint instance...
+    04:43:41.097          pjlib  .select() I/O Queue created (0x230f630)
+    04:43:41.097 sip_endpoint.c  .Module "mod-msg-print" registered
+    04:43:41.097 sip_transport.  .Transport manager created.
+    04:43:41.098   pjsua_core.c  .PJSUA state changed: NULL --> CREATED
+
+  Last command should not give anything like "ImportError" or segmentation
+  faults, and should exit cleanly with output similar to one presented above.
+
+
+* Install JACK sound server.
+
+  JACK is very mature and widely-used project, hence is packaged for all major
+  linux distros, hence it's better to install it using distro's package manager.
+
+  There are two different forks of JACK, both are in use and maintained -
+  JACK1 (C) and JACK2 (C++).
+
+  It is recommended to install JACK1 (or simply "jack", not e.g. "jack2")
+  package, as this script is tested to work with that fork, but "jack2" should
+  likely work just as well.
+
+  * Debian/Ubuntu::
+
+      apt-get install --no-install-recommends jackd1
+
+    Note ``--no-install-recommends`` flag, which should prevent Debian from
+    installing "recommended" GUI packages and X11 server for these.
+    None of them are needed or helpful, hence that option here.
+
+    "Realtime process priority" option (which apt-get might ask) is irrelevant.
+
+  * Arch Linux: ``pacman -S jack``
+
+  * Other distros: build it (JACK1) from http://jackaudio.org/downloads/
+
+  Verify or check if already installed::
+
+    % jackd --version
+    jackd version 0.124.1 tmpdir /dev/shm protocol 25
+
+  Here versions 0.X (such as in example above) will indicate that JACK1 is
+  installed and versions 1.X for JACK2.
+
+
+* Prepare environment for PagingServer, install it and its python dependency
+  modules.
+
+  It'd be unwise to run this app as a "root" user, so special uid should be
+  created for it (from a root user), along with home directory, where all app
+  files will reside::
+
+    % useradd -d /srv/paging paging
+    % mkdir -p -m700 ~paging
+    % chown -R paging: ~paging
+
+  "User=paging" is also used in systemd unit (installed and explained below),
+  so if other user name will be used here, it should be changed there as well.
+
+  Same goes for directory used here.
+
+  Then, for all the next commands in this step, shell should be switched to the
+  created user, which can be done by running "su" with root privileges::
+
+    % su - paging
+
+    % id
+    uid=1001(paging) gid=1001(paging) groups=1001(paging)
+
+  This should likely also change the shell prompt, and "id" command should give
+  non-root uid/gid (as shown above).
+
+  **IMPORTANT:** DO NOT skip any errors from command above before running the
+  next steps.
+
+  Create python virtualenv for installing the app there::
+
+    % virtualenv --clear --system-site-packages --python=python2.7 PagingServer
+    % exec bash
+    % cd PagingServer
+    % . bin/activate
+
+    % python2 -c 'import sys; print sys.path[1]'
+    /srv/paging/PagingServer/lib/python2.7
+
+  Last command can be used to verify that ``sys.path[1]`` indeed points to a
+  subdir in ~paging, and not something in /usr, which means that virtualenv was
+  correctly activated for this shell session.
+
+  Install the app and all its python module dependencies::
+
+    % pip install PagingServer
+
+    Downloading/unpacking PagingServer
+    ...
+    Downloading/unpacking JACK-Client (from PagingServer)
+    ...
+    Successfully installed PagingServer
+    Cleaning up...
+
+  Make sure app is installed and works with installed pjsua version::
+
+    % paging --version
+    paging version-unknown (see python package version)
+
+    % paging --dump-pjsua-conf-ports
+    Detected conference ports:
+    ...
+
+    % paging --dump-pjsua-devices
+    Detected sound devices:
+    ...
+
+    % paging --dump-conf
+    ;; Current configuration options
+    ...
+
+  As usual, there should be no error messages for these commands.
+
+  To return back to root shell after running ``su - paging`` command above
+  (should be still active), ``exit`` command can be used or a "Ctrl + d" key combo.
+
+  To later get back to same "paging" user shell and installed python virtualenv,
+  use the following commands (same as used above during virtualenv setup)::
+
+    % su - paging
+    % . PagingServer/bin/activate
+
+  Any (at least non system-wide) python stuff for the app should be tweaked or
+  installed only after running these (and until exiting the shell).
+
+
+* (optional) Start JACK sound server.
+
+  It is important to do this before running PagingServer, as the latter depends
+  on jackd in general, though can start it by itself with "jack-autostart = yes"
+  configuration option.
+
+  Unless that option will be used (not recommended, as there might be other apps
+  still needing JACK to be started explicitly - e.g. music players), JACK daemon
+  (jackd) should be always started before PagingServer, using the same uid
+  ("paging") as the app.
+
+  Start jackd in one of the following ways (assuming initial root shell)::
+
+    % sudo -u paging -- setsid jackd --nozombies -d dummy &
+    % disown
+
+    ### or
+
+    % su - paging
+    % setsid jackd --nozombies -d dummy &
+    % disown
+
+    ### or (if systemd is used in OS as init)
+
+    % systemd-run --uid=paging -- jackd --nozombies -d dummy
+
+  Here ``-d dummy`` output is used to avoid relying on any particular sound
+  hardware available.
+
+  Any ALSA_ (linux audio hardware stack) devices can be connected to this jackd
+  server later via "alsa_in" / "alsa_out" commands, installed along with JACK1
+  server.
+
+  See JACK_ documentation (for particular fork that is used, as this process is
+  different between JACK1 / JACK2) for more details on how to connect this sound
+  server to the actual audio hardware.
+
+  Started without any extra options (on top of what's shown above), this jackd
+  will have "default" server name, and should be used by default by all
+  jack-enabled apps (e.g. music players and such), including PagingServer itself.
+
+
+* Configure PagingServer and install binary/configuration files for running it
+  as a system service.
+
+  Install symlink to a "paging" script into system-wide $PATH (as root)::
+
+    % ln -s ~paging/PagingServer/bin/paging /usr/local/bin/
+
+    % paging --version
+    paging version-unknown (see python package version)
+
+  Despite binary being available to all users after that, DO NOT run the actual
+  service as a "root" user, at least outside of very exceptional cases
+  (e.g. maybe checking if it works as root due to dev/file access permissions).
+
+  Get annotated `paging.example.conf`_ from the github repository or pypi
+  package (included there, but not actually installed)::
+
+    % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.example.conf
+    ### or
+    % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.example.conf
+
+  Edit file as necessary (see comments there and configuration-related info in
+  this README), and put it to ``/etc/paging.conf`` (requires root privileges)::
+
+    % nano paging.example.conf
+    % install -o root -g paging -m640 -T paging.example.conf /etc/paging.conf
+
+  ``/etc/paging.conf`` is one of the default locations where app looks for
+  configuration file (see ``paging --help`` output for a full list of such
+  locations).
+
+  Test-run the service as a proper "paging" user (created in previous step) in
+  one of the following ways (assuming starting shell is root)::
+
+    % sudo -u paging -- paging --debug
+
+    ### or
+
+    % su - paging
+    % paging --debug
+
+    ### or (if systemd is used in OS as init)
+
+    % systemd-run --uid=paging -- paging --debug
+    % journalctl -n30 -af  # to see output of the ad-hoc service there
+
+  If correctly configured and working, there should be plenty of "DEBUG" output
+  (due to ``--debug`` option in commands above), but no errors, especially fatal
+  ones that cause the app to crash.
+
+
+* Configure system to run PagingServer and jackd on boot and start these as
+  system services.
+
+  TODO: systemd stuff here, some notes on same process for SysV init.
+
+
+If anything in the steps above is unclear, misleading or does not work, and can
+be fixed, please `leave a comment on- or file a new github issue`_, describing
+what's wrong and how it can be done better or corrected.
+
+More info on how to file these in a most efficient, useful and productive way
+can be found e.g. in this "`Filing Effective Bug Reports`_" article.
+
 
 
 Audio configuration
@@ -260,46 +708,6 @@ configuration file.
 See `paging.example.conf`_ for more detailed descriptons.
 
 
-Requirements
-````````````
-
-* `Python 2.7`_ (NOT 3.X).
-
-* PJSUA_ (PJSIP User Agent) and its python bindings.
-
-  Can be packaged as "pjsip", "pjsua" or "pjproject" in linux distros.
-
-  Python bindings (from the same tarball) can also be packaged separately as
-  "python-pjproject" or something like that.
-
-  If either of those isn't available, be sure to build and install pjsua AND its
-  python bindings manually from the same sources, and NOT e.g. install pjsua
-  from package and then build bindings separately.
-
-* JACK_ - both JACK1 (C) and JACK2 (C++) forks should work.
-
-  Only tested with JACK1 fork, but as both have same ABI and only interacted
-  with via libjack, there should be no difference wrt which one is actually
-  running.
-
-* `JACK-Client python module`_
-
-* (optional) ffmpeg_ binary - if audio samples are not wav files (will be
-  converted on every startup, if needed).
-
-* (optional) `python-systemd`_ - only if ``--systemd`` option is used (e.g. with
-  shipped .service file).
-
-  Developed and shipped separately from main systemd package since v223
-  (2015-07-29), likely comes installed with systemd prior to that.
-
-  Would probably make sense to install that module from OS package, which should
-  be available if systemd is used there as init by default.
-
-* (optional) `raven python module`_ - for reporting any errors via sentry.
-
-
-
 
 Misc tips and tricks
 --------------------
@@ -349,68 +757,10 @@ anything connected there will make its way to pulseaudio.
 
 
 
-Old README.md
--------------
+Old README.md things
+--------------------
 
-To be spliced here later::
-
-  ## Installation
-  These instructions are for Debian-based Linux distributions. They should point you in the right direction to set this up on other distributions - just don't expect them to work verbatim.
-  ### Install the Dependencies
-  ```
-  sudo apt-get install build-essential python2.7-dev python-pip libasound2-dev nano subversion git
-  sudo pip install raven
-  ```
-  ### Download PJSIP
-  ```
-  svn co http://svn.pjsip.org/repos/pjproject/trunk pjsip
-  ```
-  ### Compile PJSIP
-  ```
-  cd pjsip
-  export CFLAGS="$CFLAGS -fPIC" && ./configure && make dep && make
-  ```
-  ### Install PJSUA
-  ```
-  cd pjsip-apps/src/python
-  sudo python ./setup.py install
-  cd
-  ```
-  ### Get our Git repo
-  ```
-  git clone https://github.com/AccelerateNetworks/PagingServer
-  cd PagingServer
-  ```
-  ### Put the files in the right places
-  ```
-  sudo cp paging.py /opt/bin/paging.py
-  sudo cp paging.example.conf /etc/paging.conf
-  sudo cp paging.service /etc/systemd/system/paging.service
-  ```
-  ### Enable systemd service
-  ```
-  systemctl enable paging.service
-  ```
-  ### Add your SIP account
-  ```
-  sudo nano /etc/paging.conf
-  ```
-  Change the top 3 values to your SIP server, username (usually ext. number) and password. Get rid of the PA section from [PA] down unless you want a .wav to be played prior to each call.
-
-  To configure the PA section set the path to the .wav file you want played in `file =` and set how many seconds it should play in `filetime =`.
-
-  ## Running the Paging Server
-  Run either of the commands below:
-  ```
-  Run in bash/terminal:
-  /usr/bin/python /opt/bin/paging.py
-  ```
-  or
-  ```
-  Start as systemd service:
-  sudo cp paging.service /etc/systemd/system
-  sudo systemctl start paging
-  ```
+To be spliced here later, if still applicable::
 
   ## Benchmarking
 
@@ -445,15 +795,24 @@ To be spliced here later::
 
 .. _PJSUA: http://www.pjsip.org/
 .. _JACK: http://jackaudio.org/
+.. _ALSA: http://www.alsa-project.org/main/index.php/Main_Page
 .. _ini format: https://en.wikipedia.org/wiki/INI_file
 .. _paging.example.conf: paging.example.conf
 .. _PortAudio: http://www.portaudio.com/
-.. _somewhat-unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
+.. _somewhat unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
 .. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
 .. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
 .. _ffmpeg: http://ffmpeg.org/
+
+.. _pip: http://pip-installer.org/
+.. _pip2014.com: http://pip2014.com/
+.. _python packaging tutorial: https://packaging.python.org/en/latest/installing.html
 
 .. _Python 2.7: http://python.org/
 .. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
 .. _raven python module: https://pypi.python.org/pypi/raven/5.5.0
 .. _python-systemd: https://github.com/systemd/python-systemd
+
+.. _pjproject packages for debian sid: https://packages.debian.org/source/sid/pjproject
+.. _leave a comment on- or file a new github issue: https://github.com/AccelerateNetworks/PagingServer/issues
+.. _Filing Effective Bug Reports: https://raymii.org/s/articles/Filing_Effective_Bug_Reports.html
