@@ -192,7 +192,7 @@ Requirements
   Would probably make sense to install that module from OS package, which should
   be available if systemd is used there as init by default.
 
-* (optional) `raven python module`_ - for reporting any errors via sentry.
+* (optional) raven_ python module - for reporting any errors via sentry.
 
 
 Step-by-step installation process
@@ -817,7 +817,7 @@ Overview of the software stack related to audio flow:
 
   So PortAudio sends sound stream to JACK.
 
-* JACK serves as a "hub", receiving streams from music players (mpd instances),
+* JACK serves as a "hub", receiving streams from music players (mpd_ instances),
   klaxon sounds, calls picked-up by PJSUA.
 
   JACK mixes these streams together, muting and connecting/disconnecting some as
@@ -975,11 +975,11 @@ Can be done via ffmpeg_ with::
 Where it doesn't actually matter which format source "sample.mp3" is in - can be
 mp3, ogg, aac, mpc, mp4 or whatever else ffmpeg supports.
 
-Might help to avoid startup delays to conversion of these on each run.
+Might help to avoid startup delays due to conversion of these on each run.
 
 If pjsua will be complaining about sample-rate difference between wav file and
-output, ``-ar 44100`` option can be used (after ``-f wav``) to have any sampling
-rate for the output file.
+output, e.g. ``-ar 44100`` option can be used (after ``-f wav``) to have any
+sampling rate for the output file.
 
 
 Running JACK on a system where PulseAudio is the main sound server
@@ -988,8 +988,8 @@ Running JACK on a system where PulseAudio is the main sound server
 First of all, jackd has to be started manually there, and strictly before
 pulseaudio server.
 
-Then, /etc/pulse/default.pa should have something like this at the end
-(after default sink init!)::
+``/etc/pulse/default.pa`` should have something like this at the end
+(after default sink - probably alsa - init!)::
 
   load-module module-jack-source source_name=jack_in
   load-module module-loopback source=jack_in
@@ -1006,64 +1006,146 @@ On the JACK side, "PulseAudio JACK Source" port (sink) gets created, and
 anything connected there will make its way to pulseaudio.
 
 
+Running mpd player connected to JACK
+````````````````````````````````````
 
-Old README.md things
---------------------
+Music Player Daemon (mpd_) is a nice player, well-suited for purposes of
+hands-off playing music all day long in-between any kind of announcements.
 
-To be spliced here later, if still applicable::
+It also has `a vast number of clients`_, including evertyhing from IR remote
+listeners (via lirc), bluetooth phones, car stereos, to more conventional
+desktop apps and WebUIs.
 
-  ## Benchmarking
+Example configuration for mpd with JACK output and "client_name" recognized by
+default PagingServer configuration and suitable for playing pretty much
+anything::
 
-  We've tested this script with thousands of calls, it is fairly reliable and light on resources. Total CPU use on a Pentium 4 @ 2.8ghz hovered around 0.5% with 4MB ram usage. identical figures were observed on a Celeron D @ 2.53Ghz, you could probably get away with whatever your operating system requires to run in terms of hardware.
+  log_file "/dev/stdout"
+  music_directory "/mnt/music"
 
-  To benchmark, you'll need to set up callram.py.
+  # password "super-secret-admin-password@read,add,control,admin"
+  # password "password-for-teh-peeple@read,add,control"
 
-  ### Setting up callram.py
-  This setup assumes you have PJSUA installed, if not, go back to Installation earlier in this readme and install it.
+  input {
+    plugin "curl"
+  }
 
-  ### Put the files in the right places
-  ```
-  sudo cp callram.py /opt/bin/callram.py
-  sudo cp callram.example.conf /etc/callram.conf
-  ```
-  ### Add your SIP account
-  ```
-  sudo nano /etc/callram.conf
-  ```
-  Change the top 3 values to your SIP server, username (usually ext. number) and password.
+  audio_output {
+    type "jack"
+    name "jack"
+    client_name "mpd.paging:test"
+    autostart "no"
+  }
 
-  Then fill in both SIP URI: fields (uri= and to=) with the SIP URI of the client you'd like to test. SIP URIs are usually formatted as `sip:<extension#>@<exampledomain.com>` in most cases. The Domain may sometimes be an IPv4 or IPv6 address depending on your setup.
+Note that "password" lines are commented-out, which will allow any client to
+connect without any kind of authorization, so it might be a good idea to change
+these if control port is to be exposed to any kind of non-localhost network.
 
 
-  ## Running the Paging Server
-  Run either of the commands below:
-  ```
-  Run in bash/terminal:
-  /usr/bin/python /opt/bin/callram.py
-  ```
+Benchmark script (callram.py)
+`````````````````````````````
+
+Description below is from old README.md file pretty much verbatim.
+
+We've tested this script with thousands of calls, it is fairly reliable and
+light on resources. Total CPU use on a Pentium 4 @ 2.8ghz hovered around 0.5%
+with 4MB ram usage. identical figures were observed on a Celeron D @ 2.53Ghz,
+you could probably get away with whatever your operating system requires to run
+in terms of hardware.
+
+To benchmark, you'll need to set up callram.py.
+
+* Setting up callram.py
+
+  This setup assumes you have PJSUA installed, if not, go back to Installation
+  earlier in this readme and install it.
+
+* Put the files in the right places::
+
+    sudo cp callram.py /opt/bin/callram.py
+    sudo cp callram.example.conf /etc/callram.conf
+
+* Add your SIP account::
+
+    sudo nano /etc/callram.conf
+
+  Change the top 3 values to your SIP server, username (usually ext. number) and
+  password.
+
+  Then fill in both SIP URI: fields (uri= and to=) with the SIP URI of the
+  client you'd like to test.
+
+  SIP URIs are usually formatted as ``sip:<extension#>@<exampledomain.com>`` in
+  most cases.
+
+  The Domain may sometimes be an IPv4 or IPv6 address depending on your setup.
+
+* Run::
+
+    /usr/bin/python /opt/bin/callram.py
+
+
+Sending error reports to Sentry
+```````````````````````````````
+
+Sentry_ is a "modern error logging and aggregation platform".
+
+Python raven_ module has to be installed in order for this to work.
+
+If you followed step-by-step installation instructions from this README, then it
+should be installed into the same virtualenv as the PagingServer itself,
+i.e. from a root shell run::
+
+	% su - paging
+	% . PagingServer/bin/activate
+	% pip install raven
+	% exit
+
+Otherwise that module can be installed from an OS package, if available
+(recommended), or via standard python packaging tools (see `python packaging
+tutorial`_).
+
+Then uncomment and/or set "sentry_dsn" option under the ``[server]`` section of
+the configuration file.
+
+It can also be set via ``--sentry-dsn`` command-line option, e.g. in systemd
+unit distributed with the package, to apply on all setups where package is deployed.
+
+
+
+Copyright and License
+---------------------
+
+| Code and documentation copyright 2015 Accelerate Networks.
+| Code released under the GNU General Public License v2.0.
+| See LICENSE file in the repository for more details.
+| Docs released under Creative Commons.
+| Please don't be a dick about it.
+
 
 
 .. _PJSUA: http://www.pjsip.org/
 .. _JACK: http://jackaudio.org/
 .. _ALSA: http://www.alsa-project.org/main/index.php/Main_Page
 .. _ini format: https://en.wikipedia.org/wiki/INI_file
-.. _paging.example.conf: paging.example.conf
+.. _paging.example.conf: https://github.com/AccelerateNetworks/PagingServer/blob/master/paging.example.conf
 .. _PortAudio: http://www.portaudio.com/
 .. _somewhat unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
 .. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
 .. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
 .. _ffmpeg: http://ffmpeg.org/
 .. _systemctl(1) manpage: http://www.freedesktop.org/software/systemd/man/systemctl.html
+.. _mpd: http://musicpd.org/
+.. _a vast number of clients: http://mpd.wikia.com/wiki/Clients
+.. _Sentry: https://getsentry.com/
 
 .. _pip: http://pip-installer.org/
 .. _pip2014.com: http://pip2014.com/
 .. _python packaging tutorial: https://packaging.python.org/en/latest/installing.html
-
 .. _Python 2.7: http://python.org/
 .. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
-.. _raven python module: https://pypi.python.org/pypi/raven/5.5.0
+.. _raven: https://pypi.python.org/pypi/raven/5.5.0
 .. _python-systemd: https://github.com/systemd/python-systemd
-
 .. _pjproject packages for debian sid: https://packages.debian.org/source/sid/pjproject
 .. _leave a comment on- or file a new github issue: https://github.com/AccelerateNetworks/PagingServer/issues
 .. _Filing Effective Bug Reports: https://raymii.org/s/articles/Filing_Effective_Bug_Reports.html
