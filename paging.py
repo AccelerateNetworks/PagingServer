@@ -3,9 +3,10 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from contextlib import contextmanager, closing
-import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser, dirname
+from contextlib import contextmanager, closing
+from collections import deque
+import ConfigParser as configparser
 import os, sys, io, re, types, ctypes
 import time, signal, logging, inspect
 
@@ -115,6 +116,7 @@ def suppress_streams(*streams):
             os.dup2(fd_bak, fd)
             setattr(sys, k, stream)
 
+
 def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
     if isinstance(bytes_or_unicode, bytes): return bytes_or_unicode
     return bytes_or_unicode.encode(encoding, errors)
@@ -128,6 +130,7 @@ def force_str_type(bytes_or_unicode, val_or_type, **conv_kws):
     elif val_or_type is unicode or isinstance(val_or_type, unicode): f = force_unicode
     else: raise TypeError(val_or_type)
     return f(bytes_or_unicode, **conv_kws)
+
 
 def update_conf_from_file(conf, path_or_file, section='default', prefix=None):
     if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
@@ -153,6 +156,7 @@ def update_conf_from_file(conf, path_or_file, section='default', prefix=None):
             try: setattr(conf, conf_k, get_val(section, k_conf))
             except configparser.Error: pass
 
+
 def mono_time():
     if not hasattr(mono_time, 'ts'):
         class timespec(ctypes.Structure):
@@ -166,137 +170,6 @@ def mono_time():
         err = ctypes.get_errno()
         raise OSError(err, os.strerror(err))
     return ts.tv_sec + ts.tv_nsec * 1e-9
-
-def dict_with(d, **kws):
-    d.update(kws)
-    return d
-
-def dict_for_ctype(obj):
-    return dict((k, getattr(obj, k)) for k in dir(obj) if not k.startswith('_'))
-
-
-
-### PJSUA event handlers
-
-class PSCallbacks(object):
-
-    ev_type = None
-
-    def __getattribute__(self, k):
-        event, cb_default = k[3:] if k.startswith('on_') else None, False
-        sself = super(PSCallbacks, self)
-        if not event:
-            try: return sself.__getattribute__(k)
-            except AttributeError: return getattr(self.cbs, k) # proxy
-        try: v = sself.__getattribute__(k)
-        except AttributeError: v, cb_default = getattr(self.cbs, k, AttributeError), True
-        if event:
-            self.log.debug( '%s event: %s%s',
-                self.ev_type or self.__class__.__name__,
-                event, ' [default callback]' if cb_default else '' )
-        if v is AttributeError: raise v(k)
-        return v
-
-class PSAccountCallbacks(PSCallbacks):
-
-    total_calls = 0
-
-    @err_report
-    def __init__(self, server):
-        self.server, self.cbs = server, server.pj.AccountCallback()
-        self.log = get_logger()
-
-    @err_report_fatal
-    def on_reg_state(self):
-        acc = self.account.info()
-        self.log.debug(
-            'acc registration state (active: %s): %s %s',
-            acc.reg_active, acc.reg_status, acc.reg_reason )
-        if acc.reg_status >= 400:
-            raise PSAuthError( 'Account registration'
-                ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
-
-    @err_report
-    def on_incoming_call(self, call):
-        self.total_calls += 1
-        call.set_callback(PSCallCallbacks(self.server, self.total_calls, call))
-        # XXX: SIP events, watchdog calls should be ran while this happens
-        #  but shouldn't be a problem if klaxon is no more than a few seconds long
-        # XXX: delay if another call is currently active
-        self.server.set_music_mute(True)
-        self.server.wav_play_sync(self.server.conf.audio_klaxon)
-        call.answer()
-
-class PSCallCallbacks(PSCallbacks):
-
-    @err_report
-    def __init__(self, server, call_id, call):
-        self.cbs = server.pj.CallCallback(call)
-        self.server, self.call_id, self.call = server, call_id, call
-        self.pj_media_states = dict(
-            (v, k.lower()) for k,v in vars(server.pj.MediaState).viewitems() )
-        self.log = get_logger()
-
-        ci = self.call.info()
-        self.call_state = ci.state_text.lower()
-        self.media_state = self.pj_media_states[ci.media_state]
-        self.caller = ci.remote_uri
-        m = re.findall(r'<([^>]+)>', self.caller)
-        if m: self.caller = ' / '.join(m)
-        self.caller = '{} (#{})'.format(self.caller, self.call_id)
-        self.log.debug( 'New incoming call [%s]'
-            ' (remote contact: %s)', self.caller, ci.remote_contact )
-        self.ev_type = 'call [{}]'.format(self.caller)
-
-    @err_report
-    def on_state(self):
-        ci = self.call.info()
-        state_last, self.call_state = self.call_state, ci.state_text.lower()
-        self.log.debug(
-            'call [%s] state change: %r -> %r (SIP status: %s %s)',
-            self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
-        if self.call_state == 'disconnctd': self.server.set_music_mute(False)
-
-    @err_report
-    def on_media_state(self, _state_dict=dict()):
-        ci = self.call.info()
-        state_last, self.media_state = self.media_state, self.pj_media_states[ci.media_state]
-        self.log.debug(
-            'call [%s] media-state change: %r -> %r (call time: %s)',
-            self.caller, state_last, self.media_state, ci.call_time )
-        if self.media_state == 'active': self.server.conf_port_connect(ci.conf_slot)
-
-
-
-### Server
-
-def pprint_infos(infos, title=None, pre=None, buff=None):
-    p = print if not buff else ft.partial(print, file=buff)
-    if title:
-        p('{}:'.format(title))
-        if pre is None: pre = ' '*2
-    pre = pre or ''
-    if isinstance(infos, dict): infos = infos.values()
-    for info in infos:
-        info_id = '[{}] '.format(info['id']) if 'id' in info else ''
-        p('{}{}{}'.format(pre, info_id, info['name']))
-        for k, v in sorted(info.viewitems()):
-            if k in ['id', 'name']: continue
-            p('{}  {}: {}'.format(pre, k, v))
-
-def pprint_conf(conf, title=None):
-    cat, chk = None, re.compile(
-        '^({})_(.*)$'.format('|'.join(map(re.escape, conf._conf_sections))) )
-    if title: print(';; {}'.format(title))
-    for k in sorted(dir(conf)):
-        m = chk.search(k)
-        if not m: continue
-        if m.group(1) != cat:
-            cat = m.group(1)
-            print('\n[{}]'.format(cat))
-        v = conf.get(k)
-        if isinstance(v, bool): v = ['no', 'yes'][v]
-        print('{} = {}'.format(m.group(2), v))
 
 
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
@@ -356,8 +229,141 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     return dst_path
 
 
+def dict_with(d, **kws):
+    d.update(kws)
+    return d
+
+def dict_for_ctype(obj):
+    return dict((k, getattr(obj, k)) for k in dir(obj) if not k.startswith('_'))
+
+
+
+### PJSUA event handlers
+
+class PSCallbacks(object):
+
+    ev_type = None
+
+    def __getattribute__(self, k):
+        event, cb_default = k[3:] if k.startswith('on_') else None, False
+        sself = super(PSCallbacks, self)
+        if not event:
+            try: return sself.__getattribute__(k)
+            except AttributeError: return getattr(self.cbs, k) # proxy
+        try: v = sself.__getattribute__(k)
+        except AttributeError: v, cb_default = getattr(self.cbs, k, AttributeError), True
+        if event:
+            self.log.debug( '%s event: %s%s',
+                self.ev_type or self.__class__.__name__,
+                event, ' [default callback]' if cb_default else '' )
+        if v is AttributeError: raise v(k)
+        return v
+
+
+class PSAccountState(PSCallbacks):
+
+    @err_report
+    def __init__(self, server):
+        self.server, self.cbs = server, server.pj.AccountCallback()
+        self.call_queue, self.total_calls, self.call_active = deque(), 0, False
+        self.log = get_logger()
+
+    def call_init(self, cs):
+        self.log.info('Handling call: %s', cs.caller)
+        # XXX: SIP events, watchdog calls should be ran while this happens
+        #  but shouldn't be a problem if klaxon is no more than a few seconds long
+        self.call_active = cs
+        self.server.set_music_mute(True)
+        self.server.wav_play_sync(self.server.conf.audio_klaxon)
+        cs.call.answer()
+
+    def call_cleanup(self, cs):
+        if not self.call_active: return
+        self.call_active = False
+
+    @err_report_fatal
+    def on_reg_state(self):
+        acc = self.account.info()
+        self.log.debug(
+            'acc registration state (active: %s): %s %s',
+            acc.reg_active, acc.reg_status, acc.reg_reason )
+        if acc.reg_status >= 400:
+            raise PSAuthError( 'Account registration'
+                ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
+
+    @err_report
+    def on_incoming_call(self, call):
+        self.total_calls += 1
+        call.pj = self.server.pj
+        cs = PSCallState(self, self.total_calls, call)
+        if not self.call_active: self.call_init(cs)
+        else:
+            self.log.info( 'Queueing parallel call/announcement %s, because'
+                ' another one is already in-progress: %s', cs.caller, self.call_active.caller )
+            self.call_queue.append(cs)
+
+    @err_report
+    def on_cs_media_activated(self, cs, conf_slot):
+        self.server.conf_port_connect(conf_slot)
+
+    @err_report
+    def on_cs_disconnected(self, cs):
+        self.call_cleanup(cs)
+        if self.call_queue: self.call_init(self.call_queue.popleft())
+        else: self.server.set_music_mute(False)
+
+
+class PSCallState(PSCallbacks):
+
+    @err_report
+    def __init__(self, acc, call_id, call):
+        self.cbs = call.pj.CallCallback(call)
+        self.acc, self.call_id, self.call = acc, call_id, call
+        self.pj_media_states = dict(
+            (v, k.lower()) for k,v in vars(call.pj.MediaState).viewitems() )
+        self.log = get_logger()
+
+        ci = self.call.info()
+        self.call_state = ci.state_text.lower()
+        self.media_state = self.pj_media_states[ci.media_state]
+        self.caller = ci.remote_uri
+        m = re.findall(r'<([^>]+)>', self.caller)
+        if m: self.caller = ' / '.join(m)
+        self.caller = '{} (#{})'.format(self.caller, self.call_id)
+        self.log.debug( 'New incoming call [%s]'
+            ' (remote contact: %s)', self.caller, ci.remote_contact )
+        self.ev_type = 'call [{}]'.format(self.caller)
+
+        call.set_callback(self)
+
+    @err_report
+    def on_state(self):
+        ci = self.call.info()
+        state_last, self.call_state = self.call_state, ci.state_text.lower()
+        self.log.debug(
+            'call [%s] state change: %r -> %r (SIP status: %s %s)',
+            self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
+        if self.call_state == 'disconnctd':
+            self.acc.on_cs_disconnected(self)
+
+    @err_report
+    def on_media_state(self, _state_dict=dict()):
+        ci = self.call.info()
+        state_last, self.media_state = self.media_state, self.pj_media_states[ci.media_state]
+        self.log.debug(
+            'call [%s] media-state change: %r -> %r (call time: %s)',
+            self.caller, state_last, self.media_state, ci.call_time )
+        if self.media_state == 'active':
+            self.acc.on_cs_media_activated(self, ci.conf_slot)
+
+
+
+### JACK Client
+
+# Runs in a subprocess because two libjack clients can't work from
+#  the same pid, and libjack.so in the main pid is already used by pjsua.
+
 class JackClient(object):
-    # Necessary because two libjack clients can't work from the same pid.
 
     child = self_exec_args = self_exec_env = None
     jack = pj_to_jack = pj_from_jack = jack_out_hw = mpds = None
@@ -528,12 +534,12 @@ class JackClient(object):
             if state is not None: set_link(p1, p2, state)
 
 
+
+### Server
+
 class PagingServerError(Exception): pass
-
 class PSConfigurationError(PagingServerError): pass
-
 class PSAuthError(PagingServerError): pass
-
 
 class PagingServer(object):
 
@@ -655,7 +661,7 @@ class PagingServer(object):
 
         acc = self.lib.create_account(self.pj.AccountConfig(
             *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) ))
-        acc.set_callback(PSAccountCallbacks(self))
+        acc.set_callback(PSAccountState(self))
 
         self.running = True
         self.log.debug('pjsua event loop started')
@@ -719,6 +725,37 @@ class PagingServer(object):
             self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
             time.sleep(ts_diff + ts_diff_pad)
 
+
+
+### CLI and such
+
+def pprint_infos(infos, title=None, pre=None, buff=None):
+    p = print if not buff else ft.partial(print, file=buff)
+    if title:
+        p('{}:'.format(title))
+        if pre is None: pre = ' '*2
+    pre = pre or ''
+    if isinstance(infos, dict): infos = infos.values()
+    for info in infos:
+        info_id = '[{}] '.format(info['id']) if 'id' in info else ''
+        p('{}{}{}'.format(pre, info_id, info['name']))
+        for k, v in sorted(info.viewitems()):
+            if k in ['id', 'name']: continue
+            p('{}  {}: {}'.format(pre, k, v))
+
+def pprint_conf(conf, title=None):
+    cat, chk = None, re.compile(
+        '^({})_(.*)$'.format('|'.join(map(re.escape, conf._conf_sections))) )
+    if title: print(';; {}'.format(title))
+    for k in sorted(dir(conf)):
+        m = chk.search(k)
+        if not m: continue
+        if m.group(1) != cat:
+            cat = m.group(1)
+            print('\n[{}]'.format(cat))
+        v = conf.get(k)
+        if isinstance(v, bool): v = ['no', 'yes'][v]
+        print('{} = {}'.format(m.group(2), v))
 
 def main(args=None, defaults=None):
     args, defaults = sys.argv[1:] if args is None else args, defaults or Conf()
