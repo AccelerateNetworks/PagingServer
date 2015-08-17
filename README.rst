@@ -332,7 +332,7 @@ removed.
   (sed and echo lines) are necessary to enable JACK support in the PortAudio
   version bundled with pjsip.
 
-  Install pjsip/pjsua libs (should be done root or via sudo):
+  Install pjsip/pjsua libs (should be done as root or via sudo):
 
   * On Debian/Ubuntu (or similar distros)::
 
@@ -366,7 +366,7 @@ removed.
     Easy, but there's almost always a better way, that makes packaging system
     aware of (and hence capable of managing) the installed files.
 
-  Install python pjsua bindings (should be done root or via sudo):
+  Install python pjsua bindings (should be done as root or via sudo):
 
   * On Debian/Ubuntu (or similar distros)::
 
@@ -432,8 +432,8 @@ removed.
   This should likely also change the shell prompt, and "id" command should give
   non-root uid/gid (as shown above).
 
-  **IMPORTANT:** DO NOT skip any errors from command above before running the
-  next steps.
+  **IMPORTANT:** DO NOT skip any errors from ``su - paging`` command above
+  before running the next steps.
 
   Create python virtualenv for installing the app there::
 
@@ -653,8 +653,9 @@ removed.
       Should likely work on any Debian Jessie, even with any of the later
       systemd patchsets (i.e. beyond 17).
 
-      Otherwise it should be fine to just drop the ``--systemd`` option (and
-      associated stuff) from the paging.service file.
+      Otherwise, if neither of above options to install python-systemd works, it
+      should be fine to just drop the ``--systemd`` option (and associated
+      stuff) from the paging.service file.
 
       See "Running as a systemd service" in the "Usage" section for more details
       on how to do that.
@@ -1096,10 +1097,10 @@ If you followed step-by-step installation instructions from this README, then it
 should be installed into the same virtualenv as the PagingServer itself,
 i.e. from a root shell run::
 
-	% su - paging
-	% . PagingServer/bin/activate
-	% pip install raven
-	% exit
+  % su - paging
+  % . PagingServer/bin/activate
+  % pip install raven
+  % exit
 
 Otherwise that module can be installed from an OS package, if available
 (recommended), or via standard python packaging tools (see `python packaging
