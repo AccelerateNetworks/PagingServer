@@ -6,7 +6,8 @@ import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager, closing
 import ConfigParser as configparser
 from os.path import join, exists, isfile, expanduser, dirname
-import os, sys, io, re, types, time, signal, logging, inspect
+import os, sys, io, re, types, ctypes
+import time, signal, logging, inspect
 
 
 class Conf(object):
@@ -151,6 +152,20 @@ def update_conf_from_file(conf, path_or_file, section='default', prefix=None):
         for k_conf in k, k.replace('_', '-'):
             try: setattr(conf, conf_k, get_val(section, k_conf))
             except configparser.Error: pass
+
+def mono_time():
+    if not hasattr(mono_time, 'ts'):
+        class timespec(ctypes.Structure):
+            _fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
+        librt = ctypes.CDLL('librt.so.1', use_errno=True)
+        mono_time.get = librt.clock_gettime
+        mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
+        mono_time.ts = timespec
+    ts = mono_time.ts()
+    if mono_time.get(4, ctypes.pointer(ts)) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+    return ts.tv_sec + ts.tv_nsec * 1e-9
 
 def dict_with(d, **kws):
     d.update(kws)
@@ -645,7 +660,7 @@ class PagingServer(object):
         while True:
             if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
             else:
-                ts = time.time() # XXX: use monotonic time
+                ts = mono_time()
                 max_poll_delay = self.sd_cycle.ts_next - ts
                 if max_poll_delay <= 0:
                     self.sd_cycle(ts)
@@ -812,13 +827,13 @@ def main(args=None, defaults=None):
                 daemon.notify('STATUS=Running...')
                 sd_cycle.ready = True
             if sd_cycle.delay:
-                if ts is None: ts = time.time()
+                if ts is None: ts = mono_time()
                 delay = ts - sd_cycle.ts_next
                 if delay > 0: time.sleep(delay)
                 sd_cycle.ts_next += sd_cycle.delay
             else: sd_cycle.ts_next = None
             if sd_cycle.wdt: daemon.notify('WATCHDOG=1')
-        sd_cycle.ts_next = time.time()
+        sd_cycle.ts_next = mono_time()
         wd_pid, wd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
         if wd_pid and wd_pid.isdigit() and int(wd_pid) == os.getpid():
             wd_interval = float(wd_usec) / 2e6 # half of interval in seconds
