@@ -404,7 +404,7 @@ class JackClient(object):
         if self.child and self.child.poll() is not None:
             try: self.child.kill()
             except OSError: pass
-            self.child = None
+        self.child = None
 
     def set_music_mute(self, state):
         self.child.stdin.write('{}\n'.format('+-'[bool(state)]))
@@ -447,7 +447,8 @@ class JackClient(object):
         self.running = True
         while self.running:
             try: cmd = m2s.readline().strip()
-            except (OSError, IOError, KeyboardInterrupt): cmd = ''
+            except KeyboardInterrupt: continue # it's for parent pid anyway
+            except (OSError, IOError): cmd = ''
             self.log.debug('jack command: %r', cmd)
             if not cmd or cmd == 'exit': self.running = False
             elif cmd in ['+', '-']:
@@ -638,6 +639,7 @@ class PagingServer(object):
 
         self.log.debug('jack cleanup')
         self.jack.slave_stop()
+        self.jack = None
 
     def __enter__(self):
         self.init()
