@@ -289,7 +289,7 @@ removed.
 
   Install build-tools and python headers:
 
-  * Debian: ``apt-get install build-essential python-dev``
+  * Debian: ``apt-get install build-essential python-dev libjack-dev``
   * Arch: ``pacman -S base-devel``
 
   On source-based distros like Gentoo, gcc, headers and such are always come
@@ -319,18 +319,26 @@ removed.
   Build the code::
 
     % cd pjproject*
+    % ./configure --prefix=/usr --enable-shared --disable-v4l2 --disable-video
 
     % sed -i 's/\(AC_PA_USE_.*\)=1/\1=0/' third_party/build/portaudio/os-auto.mak
     % echo 'AC_PA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
     % echo 'export CFLAGS += -DPA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
+    % echo 'PORTAUDIO_OBJS += pa_jack.o pa_ringbuffer.o' >>third_party/build/portaudio/os-auto.mak
+    % echo '#include "../../../portaudio/src/hostapi/jack/pa_jack.c"' > third_party/build/portaudio/src/pa_jack.c
+    % echo '#include "../../../portaudio/include/pa_jack.h"' > third_party/build/portaudio/src/pa_jack.h
+    % sed -i 's/-lportaudio/-ljack \0/' build.mak
 
-    % ./configure --prefix=/usr --enable-shared --disable-v4l2 --disable-video
     % make dep
     % make
 
-  Above alterations to ``third_party/build/portaudio/os-auto.mak`` file
-  (sed and echo lines) are necessary to enable JACK support in the PortAudio
-  version bundled with pjsip.
+  Above alterations (sed and echo lines) are necessary to enable JACK support in
+  PortAudio version bundled with pjsip.
+
+  Instead of that patching (e.g. if it fails for some future pjsip versions), it
+  is possible to install portaudio with JACK support from OS repositories and
+  add ``--with-external-pa`` option to ``./configure ...`` line, but is not
+  recommended here.
 
   Install pjsip/pjsua libs (should be done as root or via sudo):
 
