@@ -82,19 +82,13 @@ apt_install() {
 mkdir -p "$pkg_cache"
 
 
-apt_install python python-pip python-virtualenv
-
-pip --version
-virtualenv --version
-
-
 apt_install --no-install-recommends jackd1
 
 jackd --version | grep '^jackd version 0\.'\
 	|| die "Failed to match valid jackd1 version from 'jackd --version'"
 
 
-apt_install build-essential python-dev libjack-dev
+apt_install build-essential python python-dev libjack-dev
 
 cc --version
 make --version
