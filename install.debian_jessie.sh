@@ -56,7 +56,7 @@ export DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical
 
 dpkg_check() {
 	for p in "$@"; do
-		dpkg-query -W -f='${Status}\n' "$p" | grep -q '^install ok installed$'
+		dpkg-query -W -f='${Status}\n' "$p" | grep -q '^install ok installed$' || return 1
 	done
 }
 
@@ -88,16 +88,13 @@ jackd --version | grep '^jackd version 0\.'\
 	|| die "Failed to match valid jackd1 version from 'jackd --version'"
 
 
-apt_install build-essential python python-dev libjack-dev
+apt_install curl build-essential checkinstall libjack-dev python python-dev python-setuptools
 
 cc --version
 make --version
 python2-config --includes
 
-
-apt_install curl checkinstall
-
-dpkg_check paging-server pjproject >/dev/null || {
+dpkg_check pjproject python-pjsua >/dev/null || {
 	pj_ver=2.4.5
 	pj_dir="pjproject-${pj_ver}"
 	pj_tar=/tmp/"${pj_dir}.tar.bz2"
@@ -150,8 +147,6 @@ dpkg_check paging-server pjproject >/dev/null || {
 	rm "${pj_tar}"
 }
 
-id paging || useradd -r -d /var/empty -s /bin/false paging
-
 
 apt_install python-cffi
 
@@ -173,6 +168,8 @@ dpkg_check python-jack || {
 python2 -c 'import jack'
 
 dpkg_check python-systemd || {
+	apt_install libsystemd-dev libsystemd-journal-dev
+
 	curl -L https://github.com/systemd/python-systemd/archive/v230.tar.gz | tar xz
 	pushd python-systemd-230
 
@@ -216,6 +213,8 @@ EOF
 }
 paging --version
 
+
+id paging || useradd -r -d /var/empty -s /bin/false paging
 
 [[ -e /etc/paging.conf ]]\
 	|| install -o root -g paging -m640 -T /usr/share/doc/PagingServer/paging.example.conf /etc/paging.conf
