@@ -350,18 +350,18 @@ still needing JACK to be started explicitly - e.g. music players), JACK daemon
 
 Start jackd in one of the following ways (assuming initial root shell)::
 
-  % sudo -u paging -- setsid jackd --nozombies -d dummy &
+  % setsid sudo -u paging -- jackd --nozombies --no-realtime -d dummy &
   % disown
 
   ### or
 
   % su - paging
-  % setsid jackd --nozombies -d dummy &
+  % setsid jackd --nozombies --no-realtime -d dummy &
   % disown
 
   ### or (if systemd is used in OS as init)
 
-  % systemd-run --uid=paging -- jackd --nozombies -d dummy
+  % systemd-run --uid=paging -- jackd --nozombies --no-realtime -d dummy
 
 Here ``-d dummy`` output is used to avoid relying on any particular sound
 hardware available.
@@ -442,91 +442,48 @@ below are more detailed for that scenario.
 
   * Arch Linux: ``pacman -S python2-systemd``
 
-  * Debian **Jessie**:
+  * Debian or any other distro where there is no packaged version.
 
-    At least as of now (2015-08-16), there's no prebuilt bindings package for
-    python 2.7, which was dropped due to maintainer decision, given that
-    nothing (yet) in debian depended on it.
+    For Debian - Install headers for systemd shared libraries::
 
-    Rebuild "systemd" packages manually with python2 instead of python3::
+      % apt-get install libsystemd-dev libsystemd-journal-dev
 
-      % apt-get install packaging-dev python-lxml
-      % apt-get build-dep systemd
+    Build and install python module in virtualenv (created in "Build environment
+    for PagingServer" step above)::
 
-      % apt-get source systemd
-      % cd systemd-215
+      % su - paging
+      % . PagingServer/bin/activate
 
-      % mv debian/python{3,}-systemd.install
-      % sed -i \
-        -e 's/python3/python2/' \
-        -e 's/--without-python/--with-python/' \
-        debian/rules
-      % sed -i \
-        -e 's/python3-all-dev/python-dev/' \
-        -e 's/python3-lxml/python-lxml/' \
-        -e 's/python3-systemd/python-systemd/' \
-        -e 's/python3:Depends/python:Depends/' \
-        -e 's/Python 3/Python 2/' \
-        debian/control
-      ### last two "sed" commands above are both one-liners,
-      ###  wrapped for readability
+      % wget https://github.com/systemd/python-systemd/archive/v230.tar.gz
+      % tar xf v230.tar.gz
+      % cd python-systemd-230
 
-      % fakeroot debian/rules binary
-      ### this might take a while...
+      % make
+      % pip install .
 
-      % apt-get markauto python-lxml \
-        $( apt-cache showsrc systemd | sed -e \
-          '/Build-Depends/!d;s/Build-Depends: \|,\|([^)]*),*\|\[[^]]*\]//g' )
-      ### also all on one line
+      % cd ..
+      % rm -rf v230.tar.gz python-systemd-230
 
-      % apt-get remove packaging-dev
-      % apt-get autoremove
+      % exit
 
-      % dpkg -i ../python-systemd_215-17+deb8u1_amd64.deb
+    This module is not strictly required for app to work, only adds better
+    integration with the init system.
 
-    If that doesn't work for whatever reason, and the installed OS arch is
-    x86_64 (amd64), then there's also an option to try the package I've built
-    directly::
-
-      % wget http://fraggod.net/static/mirror/packages/python-systemd_215-17%2bdeb8u1_amd64.deb
-
-      % sha256sum python-systemd_215-17+deb8u1_amd64.deb
-      02fbec7a120ab2597a784df44cfa85d31aacbdf725782bb3413436702babe955 ...
-      ### ^^^ make sure sha256sum of the downloaded package matches that ^^^
-
-      % dpkg -i python-systemd_215-17+deb8u1_amd64.deb
-
-    Should likely work on any Debian Jessie, even with any of the later
-    systemd patchsets (i.e. beyond 17).
-
-    Otherwise, if neither of above options to install python-systemd works, it
-    should be fine to just drop the ``--systemd`` option (and associated
-    stuff) from the paging.service file.
-
-    See "Running as a systemd service" in the "Usage" section for more details
-    on how to do that.
-
-  * For Debian Sid or any other distro, either:
-
-    * Install from distro package repositories, if available (recommended).
-
-    * Install into virtualenv (setup in one of the previous steps) from
-      python-systemd_ repository directly::
-
-        % su - paging
-        % . PagingServer/bin/activate
-        % pip install git+https://github.com/systemd/python-systemd
-        % exit
-
-      Separate python-systemd bindings are only available starting from
-      systemd-223 (when they were split), so it might not work for earlier
-      systemd versions.
+    If it won't be installed, be sure to drop ``--systemd`` option (and
+    associated stuff) from the paging.service file.
+    See "Running as a systemd service" in the "Usage" section of the README for
+    more details on how to do that.
 
   If systemd python bindings are going to be used, make sure that they can be
-  imported from python2::
+  imported from python2 in virtualenv::
+
+    % su - paging
+    % . PagingServer/bin/activate
 
     % python2 -c 'import systemd.daemon; print systemd.daemon.__version__'
     215
+
+    % exit
 
   Get systemd unit files for paging.service and jack@.service from the github
   repository and install these to ``/etc/systemd/system`` directory::
@@ -642,6 +599,7 @@ what's wrong and how it can be done better or corrected.
 
 More info on how to file these in a most efficient, useful and productive way
 can be found e.g. in this "`Filing Effective Bug Reports`_" article.
+
 
 
 .. _JACK: http://jackaudio.org/
