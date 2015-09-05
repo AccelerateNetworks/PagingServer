@@ -199,6 +199,29 @@ Requirements
 Debian Jessie
 `````````````
 
+* Installing everything as debian packages from third-party repository.
+
+  Should be the easiest way by far::
+
+    % apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3D021F1F4C670809
+    % echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
+    % apt-get update
+
+    % apt-get install --no-install-recommends jackd1
+    % apt-get install paging-server
+
+    % useradd -r -d /var/empty -s /bin/false paging
+    % install -o root -g paging -m640 -T /usr/share/doc/PagingServer/paging.example.conf /etc/paging.conf
+
+  Then edit config in ``/etc/paging.conf`` and start and/or enable the jackd and
+  server::
+
+    % nano /etc/paging.conf
+    % systemctl start jackd@paging paging
+    % systemctl enable jackd@paging paging
+
+  See "Usage" section for more details on how to run the thing.
+
 * Building/installing everything on-site with one script.
 
   It's possible to install all required packages, building missing ones where
@@ -221,9 +244,7 @@ Debian Jessie
   every package name it has passed to apt-get (i.e. installed via apt-get) is
   recorded, in case there might be need to cleanup these later.
 
-* Installing everything as debian packages from third-party repository.
-
-  TODO: setup repository and a buildbot for it
+  After successful installation, enable/run the service as described in "Usage" section.
 
 
 Other systems

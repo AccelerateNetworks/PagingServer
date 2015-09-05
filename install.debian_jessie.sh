@@ -88,7 +88,7 @@ jackd --version | grep '^jackd version 0\.'\
 	|| die "Failed to match valid jackd1 version from 'jackd --version'"
 
 
-apt_install curl build-essential checkinstall libjack-dev python python-dev python-setuptools
+apt_install curl build-essential checkinstall libjack0 libjack-dev python python-dev python-setuptools
 
 cc --version
 make --version
@@ -122,7 +122,8 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 	sed -i 's/^\(\s\+\)cp -af /\1cp -r /' Makefile
 
 	checkinstall -y\
-		--pkgname=pjproject --pkgversion="${pj_ver}"
+		--pkgname=pjproject --pkgversion="${pj_ver}"\
+		--requires 'libjack0'
 
 	dpkg_check pjproject
 	cp *.deb "$pkg_cache"/
@@ -132,6 +133,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 	checkinstall -y\
 		--pkgname=python-pjsua --pkgversion="${pj_ver}"\
 		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
+		--requires 'python,pjproject'\
 		-- python2 setup.py install
 
 	dpkg_check python-pjsua
@@ -158,6 +160,7 @@ dpkg_check python-jack || {
 		--pkgname=python-jack\
 		--pkgversion=$(grep '^__version__' jack.py | grep -o '[0-9.]\+')\
 		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
+		--requires 'libjack0'\
 		-- python2 setup.py install
 
 	dpkg_check python-jack
@@ -178,6 +181,7 @@ dpkg_check python-systemd || {
 		--pkgname=python-systemd\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
 		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
+		--requires 'systemd,libsystemd0,libsystemd-daemon0,libsystemd-journal0,libsystemd-id128-0'\
 		-- python2 setup.py install
 
 	dpkg_check python-systemd
@@ -203,6 +207,7 @@ EOF
 		--pkgname=paging-server\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
 		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
+		--requires 'pjproject,python,python-pjsua,python-jack'\
 		--include extras.list\
 		-- python2 setup.py install
 
