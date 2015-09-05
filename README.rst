@@ -199,7 +199,7 @@ Requirements
 Debian Jessie
 `````````````
 
-* Installing everything as debian packages from third-party repository.
+* Installing everything via debian packages from third-party repository.
 
   Should be the easiest way by far::
 
@@ -221,6 +221,8 @@ Debian Jessie
     % systemctl enable jackd@paging paging
 
   See "Usage" section for more details on how to run the thing.
+
+  Packages here are built with the script described it the next section.
 
 * Building/installing everything on-site with one script.
 
@@ -245,6 +247,10 @@ Debian Jessie
   recorded, in case there might be need to cleanup these later.
 
   After successful installation, enable/run the service as described in "Usage" section.
+
+* Manual installation.
+
+  See detailed description in the `README.install.rst`_ file.
 
 
 Other systems

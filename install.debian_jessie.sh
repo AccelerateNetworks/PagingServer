@@ -150,7 +150,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 }
 
 
-apt_install python-cffi
+apt_install python-cffi libsystemd0 libsystemd-daemon0 libsystemd-journal0 libsystemd-id128-0
 
 dpkg_check python-jack || {
 	curl -L https://github.com/spatialaudio/jackclient-python//archive/master.tar.gz | tar xz
