@@ -199,16 +199,38 @@ Requirements
 Debian Jessie
 `````````````
 
-TODO: packages/repo
+* Building/installing everything on-site with one script.
+
+	It's possible to install all required packages, building missing ones where
+	necessary by running `install.debian_jessie.sh`_ script from the repository as
+	a root user (as runs apt-get and such)::
+
+		% wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
+		% ./install.debian_jessie.sh -x
+
+	(running without -x flag will issue a warning message and exit)
+
+	It's safe to run the script several times or on a machine where some of
+	requirements (see the list above) are installed already - it should skip steps
+	that are already done or unnecessary.
+
+	Script packages everything into deb packages, and then installs these, also
+	copying packages to ``/var/tmp/PagingServer.debs``.
+
+	It also creates ``apt-get-installed.list`` file in the same directory, where
+	every package name it has passed to apt-get (i.e. installed via apt-get) is
+	recorded, in case there might be need to cleanup these later.
+
+* Installing everything as debian packages from a custom repository.
+
+	TODO: setup repository and a buildbot for it
 
 
 Other systems
 `````````````
 
-TODO: build script
-
-See also "README.install.rst" file for more information on the
-manual installation process.
+Follow the steps described in `README.install.rst`_ file, adjusting them for
+your system/distribution where necessary.
 
 
 
@@ -563,3 +585,5 @@ Copyright and License
 .. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
 .. _raven: https://pypi.python.org/pypi/raven/5.5.0
 .. _python-systemd: https://github.com/systemd/python-systemd
+.. _README.install.rst: https://github.com/AccelerateNetworks/PagingServer/blob/master/README.install.rst
+.. _install.debian_jessie.sh: https://github.com/AccelerateNetworks/PagingServer/blob/master/install.debian_jessie.sh
