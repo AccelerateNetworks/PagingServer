@@ -213,7 +213,7 @@ Debian Jessie
     % useradd -r -d /var/empty -s /bin/false paging
     % install -o root -g paging -m640 -T /usr/share/doc/PagingServer/paging.example.conf /etc/paging.conf
 
-  Then edit config in ``/etc/paging.conf`` and start and/or enable the jackd and
+  Then edit config in ``/etc/paging.conf`` and start and/or enable jackd and
   server::
 
     % nano /etc/paging.conf
@@ -222,29 +222,31 @@ Debian Jessie
 
   See "Usage" section for more details on how to run the thing.
 
-  Packages here are built with the script described it the next section.
+  Packages here are built with `install.debian_jessie.sh`_ script described in
+  the next section.
 
 * Building/installing everything on-site with one script.
 
   It's possible to install all required packages, building missing ones where
   necessary by running `install.debian_jessie.sh`_ script from the repository as
-  a root user (as runs apt-get and such)::
+  a root user (as it runs apt-get and such)::
 
     % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
     % ./install.debian_jessie.sh -x
 
   (running without -x flag will issue a warning message and exit)
 
-  It's safe to run the script several times or on a machine where some of
-  requirements (see the list above) are installed already - it should skip steps
+  It's safe to run the script several times or on a machine where some of the
+  requirements (see the list above) are installed already - should skip steps
   that are already done or unnecessary.
 
-  Script packages everything into deb packages, and then installs these, also
-  copying packages to ``/var/tmp/PagingServer.debs``.
+  Script builds everything into deb packages, stores each in
+  ``/var/tmp/PagingServer.debs``, and installs them.
 
-  It also creates ``apt-get-installed.list`` file in the same directory, where
-  every package name it has passed to apt-get (i.e. installed via apt-get) is
-  recorded, in case there might be need to cleanup these later.
+  Also creates ``apt-get-installed.list`` file in the same directory, where
+  every package name it has passed to apt-get (i.e. packages that it has
+  installed via apt-get) is recorded, in case there might be a need to clean
+  these up later.
 
   After successful installation, enable/run the service as described in "Usage" section.
 
@@ -258,7 +260,6 @@ Other systems
 
 Follow the steps described in `README.install.rst`_ file, adjusting them for
 your system/distribution where necessary.
-
 
 
 Audio configuration
