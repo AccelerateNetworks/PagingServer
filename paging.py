@@ -927,6 +927,10 @@ def main(args=None, defaults=None):
                 return 1
         return
 
+    if not isfile(conf.audio_klaxon):
+        parser.error(( 'Specified klaxon file does not exists'
+            ' (set empty value there to disable using it entirely): {!r}' ).format(conf.audio_klaxon))
+
     if conf.audio_klaxon and not conf.audio_klaxon.endswith('.wav'):
         conf.audio_klaxon = ffmpeg_towav( conf.audio_klaxon,
             max_len=conf.audio_klaxon_max_length, tmp_dir=conf.audio_klaxon_tmpdir )
