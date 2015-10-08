@@ -1,5 +1,6 @@
 [Service]
 User=%I
+SyslogIdentifier=jackd1
 ExecStart=/usr/bin/env jackd --nozombies --no-realtime -d dummy
 
 Restart=always

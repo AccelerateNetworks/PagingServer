@@ -100,6 +100,9 @@ installed to ``/etc/systemd/system``, and assumes following things:
 
 * Optional python-systemd_ module dependency is installed.
 
+There's also related ``jack@.service`` unit file for starting jackd1 as a
+specific user (specified as unit instance, e.g. ``jack@paging`` for "paging" user).
+
 With all these correct, service can then be used like this:
 
 * Start/stop/restart service::
@@ -111,7 +114,10 @@ With all these correct, service can then be used like this:
 * Enable service to start on OS boot: ``systemctl enable paging``
 
 * See if service is running, show last log entries: ``systemctl status paging``
-* Show all logging for service since last OS boot: ``journalctl -ab -u paging``
+* Show all logs for service since last OS boot: ``journalctl -ab -u paging``
+
+* Show logs for related jackd service (if started using ``jack@.service`` file
+  from this repo): ``journalctl -ab -u jack@paging``
 
 * Brutally kill service if it hangs on stop/restart:
   ``systemctl kill -s KILL paging``
@@ -217,8 +223,8 @@ Debian Jessie
   server::
 
     % nano /etc/paging.conf
-    % systemctl start jackd@paging paging
-    % systemctl enable jackd@paging paging
+    % systemctl start jack@paging paging
+    % systemctl enable jack@paging paging
 
   See "Usage" section for more details on how to run the thing.
 
