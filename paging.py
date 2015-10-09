@@ -173,6 +173,7 @@ def mono_time():
 
 
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
+    if path and path.endswith('.wav'): return path
     import subprocess, hashlib, base64, tempfile, atexit
 
     self = ffmpeg_towav
@@ -219,7 +220,6 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
 
     proc = dst_path = None
     if path:
-        if path.endswith('.wav'): return path
         dst_path = join(tmp_dir, '{}.wav'.format(
             base64.urlsafe_b64encode(hashlib.sha256(path).digest())[:8] ))
         if exists(dst_path): self.procs[dst_path] = None
@@ -940,14 +940,14 @@ def main(args=None, defaults=None):
                 return 1
         return
 
-    if not isfile(conf.audio_klaxon):
-        parser.error(( 'Specified klaxon file does not exists'
-            ' (set empty value there to disable using it entirely): {!r}' ).format(conf.audio_klaxon))
-
-    if conf.audio_klaxon and not conf.audio_klaxon.endswith('.wav'):
-        conf.audio_klaxon = ffmpeg_towav( conf.audio_klaxon,
-            max_len=conf.audio_klaxon_max_length, tmp_dir=conf.audio_klaxon_tmpdir )
-        if not conf.audio_klaxon_tmpdir: conf.audio_klaxon_tmpdir = ffmpeg_towav.tmp_dir
+    if conf.audio_klaxon:
+        if not isfile(conf.audio_klaxon):
+            parser.error(( 'Specified klaxon file does not exists'
+                ' (set empty value there to disable using it entirely): {!r}' ).format(conf.audio_klaxon))
+        if not conf.audio_klaxon.endswith('.wav'):
+            conf.audio_klaxon = ffmpeg_towav( conf.audio_klaxon,
+                max_len=conf.audio_klaxon_max_length, tmp_dir=conf.audio_klaxon_tmpdir )
+            if not conf.audio_klaxon_tmpdir: conf.audio_klaxon_tmpdir = ffmpeg_towav.tmp_dir
 
     log.info('Starting PagingServer...')
     with server_ctx as server:
