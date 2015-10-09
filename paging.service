@@ -13,7 +13,7 @@ StartLimitInterval=10min
 StartLimitBurst=10
 
 User=paging
-ExecStart=/usr/local/bin/paging --systemd
+ExecStart=/usr/bin/paging --systemd
 
 [Install]
 WantedBy=multi-user.target
