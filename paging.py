@@ -177,12 +177,17 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
 
     self = ffmpeg_towav
     if not hasattr(self, 'init'):
-        proc = subprocess.Popen(['/bin/which', 'ffmpeg'], stdout=subprocess.PIPE)
-        ffmpeg_path = proc.stdout.read()
-        if proc.wait() != 0 or not ffmpeg_path.strip():
-            raise PagingServerError(( 'ffmpeg binary is required to'
+        for p in 'ffmpeg', 'avconv':
+            proc = subprocess.Popen(['/bin/which', p], stdout=subprocess.PIPE)
+            ffmpeg_path = proc.stdout.read()
+            if proc.wait() == 0 and ffmpeg_path.strip():
+                self.binary = p
+                break
+        else:
+            raise PagingServerError(( 'ffmpeg/avconv binary is required to'
                     ' convert specified file (path: {!r}) to wav format, and it was not found in PATH.'
-                ' Either ffmpeg can be installed or file should be pre-converted to wav.' ).format(path))
+                ' Either ffmpeg can be installed (e.g. "apt-get install libav-tools"),'
+                    ' or file should be pre-converted to wav.' ).format(path))
 
         self.init, self.procs, self.log = True, dict(), get_logger()
         self.tmp_dir = tempfile.mkdtemp(prefix='ffmpeg_towav.{}.'.format(os.getpid()))
@@ -219,7 +224,7 @@ def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
             base64.urlsafe_b64encode(hashlib.sha256(path).digest())[:8] ))
         if exists(dst_path): self.procs[dst_path] = None
         else:
-            cmd = ['ffmpeg', '-y', '-v', '0']
+            cmd = [self.binary, '-y', '-v', '0']
             if max_len: cmd += ['-t', bytes(max_len)]
             cmd += ['-i', path, '-f', 'wav', dst_path]
             self.log.debug('Starting ffmpeg conversion: %s', ' '.join(cmd))
