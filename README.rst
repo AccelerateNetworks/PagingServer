@@ -231,7 +231,7 @@ Debian Jessie
     % apt-get update
 
     % apt-get install --no-install-recommends jackd1 alsa-utils
-    % apt-get install paging-server
+    % apt-get install paging-server python-systemd
 
     % useradd -r -d /var/empty -s /bin/false -G audio paging
     % install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
