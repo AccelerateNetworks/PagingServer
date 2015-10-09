@@ -174,8 +174,16 @@ def mono_time():
 
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     import subprocess, hashlib, base64, tempfile, atexit
+
     self = ffmpeg_towav
     if not hasattr(self, 'init'):
+        proc = subprocess.Popen(['/bin/which', 'ffmpeg'], stdout=subprocess.PIPE)
+        ffmpeg_path = proc.stdout.read()
+        if proc.wait() != 0 or not ffmpeg_path.strip():
+            raise PagingServerError(( 'ffmpeg binary is required to'
+                    ' convert specified file (path: {!r}) to wav format, and it was not found in PATH.'
+                ' Either ffmpeg can be installed or file should be pre-converted to wav.' ).format(path))
+
         self.init, self.procs, self.log = True, dict(), get_logger()
         self.tmp_dir = tempfile.mkdtemp(prefix='ffmpeg_towav.{}.'.format(os.getpid()))
         def proc_gc(sig, frm):
