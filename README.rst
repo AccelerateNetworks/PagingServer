@@ -58,7 +58,11 @@ Start/run in the foreground
 
 Aka simple non-forking start.
 
-Just run the thing as::
+If necessary, start jackd process in the background first::
+
+  % jackd -d dummy &>/dev/null &
+
+Then just run the thing as::
 
   % paging
 
@@ -100,24 +104,37 @@ installed to ``/etc/systemd/system``, and assumes following things:
 
 * Optional python-systemd_ module dependency is installed.
 
-There's also related ``jack@.service`` unit file for starting jackd1 as a
-specific user (specified as unit instance, e.g. ``jack@paging`` for "paging" user).
+There's also related ``paging-jack-out-all.service`` unit file for starting
+jackd1 and its audio outputs (see "JACK output configuration" section below for
+more info).
 
 With all these correct, service can then be used like this:
 
 * Start/stop/restart service::
 
+    % systemctl start paging-jack-out-all
     % systemctl start paging
     % systemctl stop paging
     % systemctl restart paging
 
-* Enable service to start on OS boot: ``systemctl enable paging``
+  Same can be done with related ``paging-jack-out-all`` service (just replace
+  "paging" with that name), which should be started/enabled along with
+  ``paging`` service.
+
+* Enable service(s) to start on OS boot::
+
+    systemctl enable paging-jack-out-all paging
+
+  See "JACK output configuration" section below for more info on
+  "paging-jack-out-all" service and what it can be replaced with in a
+  non-trivial audio setup.
 
 * See if service is running, show last log entries: ``systemctl status paging``
 * Show all logs for service since last OS boot: ``journalctl -ab -u paging``
 
-* Show logs for related jackd service (if started using ``jack@.service`` file
-  from this repo): ``journalctl -ab -u jack@paging``
+* Show logs for related jackd service: ``journalctl -ab -u jack@paging``
+
+* Continously show ("tail") all logs in the system: ``journalctl -af``
 
 * Brutally kill service if it hangs on stop/restart:
   ``systemctl kill -s KILL paging``
@@ -213,18 +230,18 @@ Debian Jessie
     % echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
     % apt-get update
 
-    % apt-get install --no-install-recommends jackd1
+    % apt-get install --no-install-recommends jackd1 alsa-utils
     % apt-get install paging-server
 
-    % useradd -r -d /var/empty -s /bin/false paging
+    % useradd -r -d /var/empty -s /bin/false -G audio paging
     % install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
-  Then edit config in ``/etc/paging.conf`` and start and/or enable jackd and
-  server::
+  Then edit config in ``/etc/paging.conf`` and start and/or enable jackd, its
+  bridge to ALSA hardware and server::
 
     % nano /etc/paging.conf
-    % systemctl start jack@paging paging
-    % systemctl enable jack@paging paging
+    % systemctl start paging-jack-out-all paging
+    % systemctl enable paging-jack-out-all paging
 
   See "Usage" section for more details on how to run the thing.
 
@@ -268,8 +285,9 @@ Follow the steps described in `README.install.rst`_ file, adjusting them for
 your system/distribution where necessary.
 
 
+
 Audio configuration
-```````````````````
+-------------------
 
 Overview of the software stack related to audio flow:
 
@@ -303,7 +321,10 @@ Overview of the software stack related to audio flow:
   there) to the sound hardware.
 
 
-Hence audio configuration can be roughly divided into these sections (at the moment):
+PagingServer audio configuration
+````````````````````````````````
+
+Configuration here can be roughly divided into these sections (at the moment):
 
 
 * Sound output settings for PJSUA.
@@ -430,6 +451,74 @@ All settings mentioned here are located in the ``[audio]`` section of the
 configuration file.
 
 See `paging.example.conf`_ for more detailed descriptons.
+
+
+JACK output configuration
+`````````````````````````
+
+This relates to the very last step in the "audio flow" list above, and only
+required if "paging-jack-out-all" service using all ALSA cards suggested in the
+"Installation" section above is not desirable for some reason.
+
+Also, it only applies if JACK1 is used (as suggested in "Installation" section),
+for JACK2 see its official documentation on audio adapters.
+
+By default, when started via systemd unit file from this repo (e.g. ``systemctl
+start jack@paging`` or pulled-in as a dependency for ``paging`` service), or via
+``jackd -d dummy`` as suggested in "Start/run in the foreground" section above,
+jack does not use any hardware audio outputs.
+
+To add these at any time, install alsa-utils (if not installed already) and use
+``aplay -L`` command to list audio output hardware available::
+
+  % aplay -L | grep -A2 ^default
+  default:CARD=I82801AAICH
+      Intel 82801AA-ICH, Intel 82801AA-ICH
+      Default Audio Device
+  --
+  default:CARD=Intel
+      HDA Intel, ID 22 Analog
+      Default Audio Device
+
+Here aplay listed two audio cards, which can be used with JACK1's "alsa_out"
+client as ``hw:CARD=I82801AAICH`` and ``hw:CARD=Intel`` respectively.
+
+To add output through second "HDA Intel" sound card to jack, "alsa_out" client
+(running as daemon) should be started with that card name, e.g. to do it
+manually from console::
+
+  % alsa_out -d hw:CARD=Intel &>/dev/null
+
+This will run indefinitely, serving as a bridge between JACK1 "jackd" daemon and
+specified sound hardware outputs.
+
+Keep in mind that "alsa_out" processes must be started with the same uid (user)
+as jackd, and have access to audio hardware (i.e. have "audio" group on most
+distros, if user is not root).
+
+For production use, it'd make sense to start this process for every needed card
+on system boot.
+
+This can be done via ``paging-jack-out-all.service`` unit file from the repo
+(should be installed with "paging-server" package) for all cards::
+
+  % systemctl start paging-jack-out-all
+  % systemctl enable paging-jack-out-all
+
+Alternatively, to only enable specific cards (with names from ``aplay -L``
+output above), ``paging-jack-out@.service`` unit file can be used instead.
+
+Example for enabling only ``CARD=I82801AAICH``::
+
+  % systemctl stop paging-jack-out-all
+  % systemctl disable paging-jack-out-all
+
+  % card_unit=$(systemd-escape --template paging-jack-out@.service hw:CARD=I82801AAICH)
+  % systemctl start $card_unit
+  % systemctl enable $card_unit
+
+Note that "systemd-escape" is used to convert whatever raw name from alsa to
+properly-escaped systemd unit instance.
 
 
 

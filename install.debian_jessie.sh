@@ -203,9 +203,11 @@ dpkg_check paging-server || {
 	cat >extras.list <<EOF
 usr/lib/systemd/system/paging.service
 usr/lib/systemd/system/jack@.service
+usr/lib/systemd/system/paging-jack-out-all.service
+usr/lib/systemd/system/paging-jack-out@.service
 usr/share/doc/paging-server/paging.example.conf
 EOF
-	install -D -m0644 -t usr/lib/systemd/system/ paging.service jack@.service
+	install -D -m0644 -t usr/lib/systemd/system/ *.service
 	install -D -m0644 -t usr/share/doc/paging-server/ paging.example.conf
 
 	chk_install -y\
@@ -224,13 +226,14 @@ EOF
 paging --version
 
 
-id paging || useradd -r -d /var/empty -s /bin/false paging
+id paging || useradd -r -d /var/empty -s /bin/false -G audio paging
 
 [[ -e /etc/paging.conf ]]\
 	|| install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
-[[ -n "$(systemctl cat paging)" ]] || die 'Failed to load paging.service'
-[[ -n "$(systemctl cat jack@paging)" ]] || die 'Failed to load jack@paging.service'
+for s in paging jack@paging paging-jack-out-all paging-jack-out@test
+do [[ -n "$(systemctl cat "$s")" ]] || die "Failed to load $s.service"
+done
 
 
 echo
@@ -241,12 +244,13 @@ echo
 echo "Edit configuration file in: /etc/paging.conf"
 echo "At least domain/user/pass MUST be specified there in the [sip] section."
 echo
-echo "After that, start the service with: systemctl start jack@paging paging"
+echo "After that, start the service with: systemctl start jack-paging-out-all paging"
 echo "  check status: systemctl status jack@paging paging"
 echo "  check service log with: journalctl -ab -u paging"
-echo "  continuously 'tail' log with: journalctl -ab -u paging"
+echo "  continuously 'tail' log with: journalctl -af -u paging"
+echo "  continuously tail all system logs with: journalctl -af"
 echo
 echo "If service has been started and is running successfully,"
-echo " enable it to run on boot with: systemctl enable jack@paging paging"
+echo " enable it to run on boot with: systemctl enable jack-paging-out-all paging"
 echo
 echo --------------------

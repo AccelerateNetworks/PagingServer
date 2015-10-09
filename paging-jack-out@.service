@@ -1,0 +1,20 @@
+[Unit]
+After=jack@paging.service
+Requires=jack@paging.service
+
+[Service]
+User=paging
+Group=audio
+SyslogIdentifier=jackd1-paging-%I
+Environment=JACK_NO_START_SERVER=t
+ExecStart=/usr/bin/alsa_out -d %I
+StandardOutput=null
+StandardError=null
+
+Restart=always
+RestartSec=300ms
+StartLimitInterval=60s
+StartLimitBurst=20
+
+[Install]
+WantedBy=mutli-user.target

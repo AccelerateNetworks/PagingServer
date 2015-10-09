@@ -1,6 +1,7 @@
 [Unit]
 After=network-online.target jack@paging.service
 Wants=network-online.target
+Requires=jack@paging.service
 
 [Service]
 Type=notify

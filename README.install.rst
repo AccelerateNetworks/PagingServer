@@ -258,7 +258,7 @@ It'd be unwise to run this app as a "root" user, so special uid should be
 created for it (from a root user), along with home directory, where all app
 files will reside::
 
-  % useradd -d /srv/paging -s /bin/bash paging
+  % useradd -d /srv/paging -s /bin/bash -G audio paging
   % mkdir -p -m700 ~paging
   % chown -R paging: ~paging
 
@@ -486,21 +486,20 @@ below are more detailed for that scenario.
 
     % exit
 
-  Get systemd unit files for paging.service and jack@.service from the github
-  repository and install these to ``/etc/systemd/system`` directory::
+  Get systemd unit files from the github repository and install these to
+  ``/etc/systemd/system`` directory::
 
     % cd /etc/systemd/system
 
     % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.service
     % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/jack@.service
+    % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging-jack-out@.service
+    % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging-jack-out-all.service
 
-    ### or
+    ### or same URLs with "curl -O" instead of "wget"
 
-    % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/paging.service
-    % curl -O https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/jack@.service
-
-  Note that both .service files assume that app will be run with the user and
-  paths (config, script symlink) from the steps above, and should be changed
+  Note that all paging*.service files assume that app will be run with the user
+  and paths (config, script symlink) from the steps above, and should be changed
   if other uid/paths should be used.
 
   See "Running as a systemd service" (under "Usage") for more details on
@@ -514,14 +513,14 @@ below are more detailed for that scenario.
 
   Start both services::
 
-    % systemctl start jack@paging paging
+    % systemctl start paging-jack-out-all paging
 
   Verify that both were started and are running correctly::
 
-    % systemctl status jack@paging paging
+    % systemctl status paging-jack-out-all paging
 
-    ● jack@paging.service
-       Loaded: loaded (/etc/systemd/system/jack@.service; disabled)
+    ● paging-jack-out-all.service
+       Loaded: loaded (/etc/systemd/system/paging-jack-out-all.service; disabled)
        Active: active (running) since Sun 2015-08-16 08:20:28 EDT; 3min 32s ago
     ...
 
@@ -545,18 +544,22 @@ below are more detailed for that scenario.
 
   Enable JACK and PagingServer to start on OS boot::
 
-    % systemctl enable jack@paging paging
+    % systemctl enable paging-jack-out-all paging
 
-    Created symlink from ... to /etc/systemd/system/jack@.service.
+    Created symlink from ... to /etc/systemd/system/paging-jack-out-all.service.
     Created symlink from ... to /etc/systemd/system/paging.service.
 
   Note that "systemctl enable" won't start the services right away, "start"
   can be used to do that separately.
 
-  Verify or check whether paging.service and jack@paging.service are enabled
-  to start on boot::
+  See "JACK output configuration" section in the main README file for more
+  detailed description of what "paging-jack-out-all.service" does and what it
+  can be replaced with for non-trivial audio setups.
 
-    % systemctl is-enabled jack@paging paging
+  Verify or check whether paging.service and paging-jack-out-all.service are
+  enabled to start on boot::
+
+    % systemctl is-enabled paging-jack-out-all paging
     enabled
     enabled
 
@@ -564,9 +567,9 @@ below are more detailed for that scenario.
 
 * With SysV init (``/etc/init.d/`` scripts) or any other init system.
 
-  Both commands from ``ExecStart=...`` lines in paging.service and
-  jack@.service in the github repository should be scheduled to run on boot as
-  specific user (e.g. "paging") and "backgrounded".
+  Commands from ``ExecStart=...`` lines in paging.service, jack@.service and
+  paging-jack-out-all.service in the github repository should be scheduled to
+  run on boot as specific user (e.g. "paging") and "backgrounded".
 
   From any sh/bash script (running as root) it's fairly easy to do this by
   adding the following lines::
@@ -575,10 +578,16 @@ below are more detailed for that scenario.
     disown
     sudo -u paging -- setsid jackd --nozombies --no-realtime -d dummy &
     disown
+    sudo -u paging -- bash -c\
+      'for c in $(aplay -L | grep ^default:CARD= | cut -d: -f2);\
+        do alsa_out -d hw:$c &>/dev/null & disown; done'
 
   On many "classic" sysvinit/rc.d systems it can be done by adding these to
   /etc/rc.local, or creating a separate initscript for these in
   ``/etc/init.d`` or ``/etc/rc.d``.
+
+  See "JACK output configuration" section in the main README file for more info
+  on what the last (kinda-complicated) command does.
 
   Other init systems like openrc, runit, upstart can have their own ways to
   achieve same results, which should be fairly trivial to configure by

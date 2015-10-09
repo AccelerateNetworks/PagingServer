@@ -1,0 +1,20 @@
+[Unit]
+After=jack@paging.service
+Requires=jack@paging.service
+
+[Service]
+User=paging
+Group=audio
+SyslogIdentifier=jackd1-paging-out-all
+Environment=JACK_NO_START_SERVER=t
+ExecStart=/bin/bash -c "\
+	for c in $(aplay -L | grep ^default:CARD= | cut -d: -f2);\
+	do alsa_out -d hw:$c &>/dev/null & done; wait -n ; kill 0 ; exit 1"
+
+Restart=always
+RestartSec=300ms
+StartLimitInterval=120s
+StartLimitBurst=50
+
+[Install]
+WantedBy=mutli-user.target
