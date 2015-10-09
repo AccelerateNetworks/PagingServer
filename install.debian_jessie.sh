@@ -30,7 +30,7 @@ set -e -o pipefail
 
 pkg_cache=/var/tmp/PagingServer.debs
 pkg_list="$pkg_cache"/apt-get-installed.list
-pkg_release=2
+pkg_release=3
 
 tmp_dir=$(mktemp -d "${HOME}"/PagingServer.install.XXXXXX)
 [[ -n "$NOCLEANUP" ]] || trap "rm -rf '$tmp_dir'" EXIT
@@ -164,7 +164,7 @@ dpkg_check python-jack || {
 	chk_install -y\
 		--pkgname=python-jack\
 		--pkgversion=$(grep '^__version__' jack.py | grep -o '[0-9.]\+')\
-		--requires 'libjack0'\
+		--requires 'libjack0,python-cffi'\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
 
