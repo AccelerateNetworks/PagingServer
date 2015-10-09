@@ -30,6 +30,7 @@ set -e -o pipefail
 
 pkg_cache=/var/tmp/PagingServer.debs
 pkg_list="$pkg_cache"/apt-get-installed.list
+pkg_release=2
 
 tmp_dir=$(mktemp -d "${HOME}"/PagingServer.install.XXXXXX)
 [[ -n "$NOCLEANUP" ]] || trap "rm -rf '$tmp_dir'" EXIT
@@ -48,7 +49,7 @@ echo --------------------
 echo
 
 
-die() { echo >&2 "$@"; exit 1; }
+die() { echo >&2 "ERROR: $@"; exit 1; }
 die_check() { echo >&2 "Check failed: $@"; exit 1; }
 force_empty_line_end() { { rm "$1"; awk '{chk=!$0; print} END {if (!chk) print ""}' >"$1"; } <"$1"; }
 
@@ -77,6 +78,10 @@ apt_install() {
 		-o Dpkg::Options::="--force-confdef"\
 		-o Dpkg::Options::="--force-confold"\
 		--force-yes -y install "${args[@]}"
+}
+
+chk_install() {
+	checkinstall --pkgrelease="$pkg_release" "$@"
 }
 
 mkdir -p "$pkg_cache"
@@ -121,7 +126,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 	make
 	sed -i 's/^\(\s\+\)cp -af /\1cp -r /' Makefile
 
-	checkinstall -y\
+	chk_install -y\
 		--pkgname=pjproject --pkgversion="${pj_ver}"\
 		--requires 'libjack0'
 
@@ -130,11 +135,11 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 
 	pushd pjsip-apps/src/python
 
-	checkinstall -y\
+	chk_install -y\
 		--pkgname=python-pjsua --pkgversion="${pj_ver}"\
-		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
 		--requires 'python,pjproject'\
-		-- python2 setup.py install
+		-- python2 setup.py install\
+			--prefix=/usr --install-layout=deb
 
 	dpkg_check python-pjsua
 	cp *.deb "$pkg_cache"/
@@ -142,7 +147,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 	popd
 
 	python2 -c 'import pjsua; lib = pjsua.Lib(); lib.init(); lib.destroy()' 2>&1 |
-		grep 'Transport manager created'
+		grep 'Transport manager created' || die 'Failed to initialize pjsua python module'
 
 	popd
 
@@ -153,15 +158,15 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 apt_install python-cffi libsystemd0 libsystemd-daemon0 libsystemd-journal0 libsystemd-id128-0
 
 dpkg_check python-jack || {
-	curl -L https://github.com/spatialaudio/jackclient-python//archive/master.tar.gz | tar xz
+	curl -L https://github.com/spatialaudio/jackclient-python/archive/master.tar.gz | tar xz
 	pushd jackclient-python-master
 
-	checkinstall -y\
+	chk_install -y\
 		--pkgname=python-jack\
 		--pkgversion=$(grep '^__version__' jack.py | grep -o '[0-9.]\+')\
-		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
 		--requires 'libjack0'\
-		-- python2 setup.py install
+		-- python2 setup.py install\
+			--prefix=/usr --install-layout=deb --old-and-unmanageable
 
 	dpkg_check python-jack
 	cp *.deb "$pkg_cache"/
@@ -177,12 +182,12 @@ dpkg_check python-systemd || {
 	pushd python-systemd-230
 
 	make
-	checkinstall -y\
+	chk_install -y\
 		--pkgname=python-systemd\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
 		--requires 'systemd,libsystemd0,libsystemd-daemon0,libsystemd-journal0,libsystemd-id128-0'\
-		-- python2 setup.py install
+		-- python2 setup.py install\
+			--prefix=/usr --install-layout=deb
 
 	dpkg_check python-systemd
 	cp *.deb "$pkg_cache"/
@@ -198,18 +203,18 @@ dpkg_check paging-server || {
 	cat >extras.list <<EOF
 usr/lib/systemd/system/paging.service
 usr/lib/systemd/system/jack@.service
-usr/share/doc/PagingServer/paging.example.conf
+usr/share/doc/paging-server/paging.example.conf
 EOF
 	install -D -m0644 -t usr/lib/systemd/system/ paging.service jack@.service
-	install -D -m0644 -t usr/share/doc/PagingServer/ paging.example.conf
+	install -D -m0644 -t usr/share/doc/paging-server/ paging.example.conf
 
-	checkinstall -y\
+	chk_install -y\
 		--pkgname=paging-server\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--exclude /usr/local/lib/python2.7/dist-packages/easy-install.pth\
 		--requires 'pjproject,python,python-pjsua,python-jack'\
 		--include extras.list\
-		-- python2 setup.py install
+		-- python2 setup.py install\
+			--prefix=/usr --install-layout=deb --old-and-unmanageable
 
 	dpkg_check paging-server
 	cp *.deb "$pkg_cache"/
@@ -222,10 +227,10 @@ paging --version
 id paging || useradd -r -d /var/empty -s /bin/false paging
 
 [[ -e /etc/paging.conf ]]\
-	|| install -o root -g paging -m640 -T /usr/share/doc/PagingServer/paging.example.conf /etc/paging.conf
+	|| install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
-[[ -n "$(systemctl cat paging)" ]] || die "Failed to load paging.service"
-[[ -n "$(systemctl cat jack@paging)" ]] || die "Failed to load jack@paging.service"
+[[ -n "$(systemctl cat paging)" ]] || die 'Failed to load paging.service'
+[[ -n "$(systemctl cat jack@paging)" ]] || die 'Failed to load jack@paging.service'
 
 
 echo

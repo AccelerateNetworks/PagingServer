@@ -216,7 +216,8 @@ Install python pjsua bindings (should be done as root or via sudo):
 * On Debian/Ubuntu (or similar distros)::
 
     % pushd pjsip-apps/src/python
-    % checkinstall -y --pkgname=python-pjsua python2 setup.py install
+    % checkinstall -y --pkgname=python-pjsua --\
+        python2 setup.py install --prefix=/usr --install-layout=deb --old-and-unmanageable
     % popd
 
   Same as above, using "checkinstall" is highly recommended on these distros.

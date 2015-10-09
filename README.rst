@@ -217,7 +217,7 @@ Debian Jessie
     % apt-get install paging-server
 
     % useradd -r -d /var/empty -s /bin/false paging
-    % install -o root -g paging -m640 -T /usr/share/doc/PagingServer/paging.example.conf /etc/paging.conf
+    % install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
   Then edit config in ``/etc/paging.conf`` and start and/or enable jackd and
   server::
@@ -238,7 +238,7 @@ Debian Jessie
   a root user (as it runs apt-get and such)::
 
     % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
-    % ./install.debian_jessie.sh -x
+    % bash install.debian_jessie.sh -x
 
   (running without -x flag will issue a warning message and exit)
 
