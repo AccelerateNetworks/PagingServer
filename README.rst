@@ -344,9 +344,9 @@ ASCII diagram
                  |   |           |   |                 <---+
   | Klaxon files - - - >         |   |     |           |
                  |   |      ^    |   |     +---------> ------+
-  +- - - - - - - +   +------|----+   |     |           |     |
+  + - - - - - - -+   +------|----+   |     |           |     |
                                      |     +---------> ----+ |
-  + - - - - - - - - - - - - + - - -+ |     |           |   | |
+  + - - - - - - - - - - - - | - - -+ |     |           |   | |
   |                                  |     +---------> --+ | |
     --test-audio-file my-sound.wav | |                 | | | |
   |                                  | JACK daemon     | | | |
@@ -378,17 +378,18 @@ ASCII diagram
         |                        |  |                        |
         +------------------------+  +------------------------+
 
+Diagram above depicts the case when call arrives from SIP network and
+PagingServer connects that instead of music to all speakers (default
+configuration is to use all outputs), after playing klaxon sound (if specified).
+
+Other misc points about this setup:
+
 * All links inside "JACK daemon" are configurable, with ones specified in the
   PagingServer config (see below) being managed (i.e. connected/disconnected)
   by it.
 
   Think of jackd as a `patch panel`_, where you have jack holes (ports), and can
   connect any of them to (any number of) others with jack-jack cables.
-
-  Diagram above depicts the case when call arrives from SIP network and
-  PagingServer connects that instead of music to all speakers (default
-  configuration is to use all outputs), after playing klaxon sound (if
-  specified).
 
 * "dummy output" exists if/because JACK1 is started as ``jackd -d dummy``, each
   ALSA device (or whatever other output) then gets connected to it by separate
