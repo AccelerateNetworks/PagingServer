@@ -320,6 +320,103 @@ Overview of the software stack related to audio flow:
 * JACK outputs resulting sound stream(s) through ALSA libs (and linux from
   there) to the sound hardware.
 
+Whole stack can always be tested with command like this::
+
+  % paging --test-audio-file my-sound.wav
+
+That option makes script just play the specified file with pjsua and exit.
+If that works correctly, all that sound output pipeline from pjsua to alsa
+should be fine.
+
+
+ASCII diagram
+`````````````
+
+::
+
+  +--------------+   +-----------+   +-----------------+ +------------+
+  |              |   |           |   |                 | |            |
+  | SIP network  ----->          ---->  PortAudio lib  | | mpd player |
+  |              |   |   PJSUA   |   |                 | |            |
+  +--------------+   |           |   +-----|-----------+ +-|----------+
+                     |           |         |               |
+  +- - - - - - - +   |           |   +-----v-----------+   |
+                 |   |           |   |                 <---+
+  | Klaxon files - - - >         |   |     |           |
+                 |   |      ^    |   |     +---------> ------+
+  +- - - - - - - +   +------|----+   |     |           |     |
+                                     |     +---------> ----+ |
+  + - - - - - - - - - - - - + - - -+ |     |           |   | |
+  |                                  |     +---------> --+ | |
+    --test-audio-file my-sound.wav | |                 | | | |
+  |                                  | JACK daemon     | | | |
+  +- - - - - - - - - - - - - - - - + +-----------------+ | | |
+                                                         | | |
+        +-------------------------------------+          | | |
+        | dummy output (system:* jack ports)  <----------+ | |
+        +-------------------------------------+            | |
+                                                           | |
+        +-------------------------------------+            | |
+        |                                     |            | |
+        | ALSA Card-A [alsa_out -d hw:CARD=A] <------------+ |
+   +-----  (alsa_out*:playback_* jack ports)  |              |
+   |    |                                     |              |
+   |    +-------------------------------------+              |
+   |                                                         |
+   |    +-------------------------------------+              |
+   |    |                                     |              |
+   |    | ALSA Card-B [alsa_out -d hw:CARD=B] <--------------+
+   | +---  (alsa_out*:playback_* jack ports)  |
+   | |  |                                     |
+   | |  +-------------------------------------+
+   | |
+   | +--------------------------------+
+   |                                  |
+   |    +------------------------+  +-v----------------------+
+   |    |                        |  |                        |
+   +---->       Speakers-A       |  |       Speakers-B       |
+        |                        |  |                        |
+        +------------------------+  +------------------------+
+
+* All links inside "JACK daemon" are configurable, with ones specified in the
+  PagingServer config (see below) being managed (i.e. connected/disconnected)
+  by it.
+
+  Think of jackd as a `patch panel`_, where you have jack holes (ports), and can
+  connect any of them to (any number of) others with jack-jack cables.
+
+  Diagram above depicts the case when call arrives from SIP network and
+  PagingServer connects that instead of music to all speakers (default
+  configuration is to use all outputs), after playing klaxon sound (if
+  specified).
+
+* "dummy output" exists if/because JACK1 is started as ``jackd -d dummy``, each
+  ALSA device (or whatever other output) then gets connected to it by separate
+  "bridge" process (e.g. "alsa_out").
+
+  Separate "alsa_out" processes are only applicable to JACK1, I think JACK2
+  handles that case by a daemon module.
+
+* There can be any number of outputs (e.g. ALSA sound cards) connected, just run
+  bridges for these (or connect via daemon module in JACK2).
+
+  Diagram above depicts two ALSA cards connected.
+
+  See "JACK output configuration" section below for more info on these.
+
+* Note that "alsa_out" process generally creates two separate ports, one for
+  left channel/speaker and one for right.
+
+* Instead of "mpd player" there can be anything that can output sound to jack,
+  e.g. mpg123, mpv, mplayer, ffmpeg or anything else, really.
+
+  Just be sure to configure the thing to output via JACK and configure
+  PagingServer to manage (connect/disconnect) that port via ``jack-music-*``
+  options (see below).
+
+  See also "Running mpd player connected to JACK" section under "Misc tips and
+  tricks" below.
+
 
 PagingServer audio configuration
 ````````````````````````````````
@@ -495,6 +592,10 @@ specified sound hardware outputs.
 Keep in mind that "alsa_out" processes must be started with the same uid (user)
 as jackd, and have access to audio hardware (i.e. have "audio" group on most
 distros, if user is not root).
+
+To have distinct (and less confusing) names for jack ports that alsa_out creates
+(default is alsa_out, alsa_out-01, alsa_out-02, ...), ``alsa_out -j my-port-name
+...`` option can be used.
 
 For production use, it'd make sense to start this process for every needed card
 on system boot.
@@ -691,6 +792,7 @@ Copyright and License
 .. _JACK: http://jackaudio.org/
 .. _ALSA: http://www.alsa-project.org/main/index.php/Main_Page
 .. _ini format: https://en.wikipedia.org/wiki/INI_file
+.. _patch panel: https://en.wikipedia.org/wiki/Patch_panel
 .. _paging.example.conf: https://github.com/AccelerateNetworks/PagingServer/blob/master/paging.example.conf
 .. _PortAudio: http://www.portaudio.com/
 .. _somewhat unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
