@@ -521,10 +521,8 @@ class JackClient(object):
             t = 'connect' if state else 'disconnect'
             self.log.debug('set_link %s %s %s', p1, p2, t)
             try: getattr(self.jack, t)(p1, p2)
-            except self.jack.Error as err: pass # failures here seem to be lies, client sucks
-                # err = bytes(err)
-                # if not re.search(r'already exists$', err):
-                # 	self.log.debug('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
+            except self.jack.Error as err:
+                self.log.warn('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
 
         if not p_remove:
             ## New PortAudio ports
