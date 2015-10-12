@@ -30,7 +30,7 @@ class Conf(object):
 
     audio_jack_output_ports = ''
     audio_jack_music_client_name = '^mpd\.paging:(.*)$'
-    audio_jack_music_links = 'left---left right---right'
+    audio_jack_music_links = 'left---(left|playback_1) right---(right|playback_2)'
 
     server_debug = False
     server_pjsua_log_level = 0
@@ -521,8 +521,8 @@ class JackClient(object):
             t = 'connect' if state else 'disconnect'
             self.log.debug('set_link %s %s %s', p1, p2, t)
             try: getattr(self.jack, t)(p1, p2)
-            except self.jack.Error as err:
-                self.log.warn('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
+            except self.jack.Error as err: pass
+                # self.log.debug('Failed to %s jack ports %s -> %s: %s', t, p1, p2, err)
 
         if not p_remove:
             ## New PortAudio ports
