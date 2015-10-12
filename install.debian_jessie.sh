@@ -87,7 +87,7 @@ chk_install() {
 mkdir -p "$pkg_cache"
 
 
-apt_install --no-install-recommends jackd1
+apt_install --no-install-recommends jackd1 alsa-utils
 
 jackd --version | grep '^jackd version 0\.'\
 	|| die "Failed to match valid jackd1 version from 'jackd --version'"
