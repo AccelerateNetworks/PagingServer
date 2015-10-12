@@ -416,7 +416,8 @@ class JackClient(object):
             self.self_exec_args,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             env=self.self_exec_env, close_fds=True )
-        assert self.child.stdout.readline() == 'started\n'
+        init = self.child.stdout.readline()
+        assert init == 'started\n', repr(init)
         # XXX: restarting child pid on failures
 
     def slave_stop(self):
@@ -445,7 +446,7 @@ class JackClient(object):
                 raise ValueError('Invalid music-link spec: {!r}'.format(mpd_link))
             self.mpd_links.append(tuple(map(re.compile, [p_mpd, p_out])))
 
-        import jack
+        import jack, select
         client_name = self.conf.client_name
         if not client_name: client_name = 'paging.{}'.format(os.getpid())
         self.jack = jack.Client( client_name,
@@ -455,16 +456,27 @@ class JackClient(object):
         self.jack.set_port_registration_callback(self.init_port)
         self.jack.activate()
 
-        for port in self.jack.get_ports(): self.init_port(port)
-
         for k in 'stdout', 'stderr':
             setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
-        sys.stdout.write('started\n')
         m2s, s2m = sys.stdin, sys.stdout
+        s2m.write('started\n')
+        self.port_evq, (self.port_evq_r, self.port_evq_w) = deque(), os.pipe()
+        poller, self.running = select.epoll(), True
+        for fd in m2s, self.port_evq_r: poller.register(fd, select.EPOLLIN)
+
+        for port in self.jack.get_ports(): self.init_port(port, queue=False)
 
         self.log.debug('jack client loop started')
-        self.running = True
         while self.running:
+            evs = poller.poll()
+            for fd, ev in evs or list():
+                if fd == self.port_evq_r:
+                    os.read(self.port_evq_r, 1)
+                    try: port, port_new = self.port_evq.popleft()
+                    except IndexError: continue
+                    self.init_port(port, port_new, queue=False)
+                else: break
+            else: continue
             try: cmd = m2s.readline().strip()
             except KeyboardInterrupt: continue # it's for parent pid anyway
             except (OSError, IOError): cmd = ''
@@ -480,8 +492,16 @@ class JackClient(object):
         self.jack.deactivate()
         self.jack.close()
 
-    def init_port( self, port, port_new=None,
+    def init_port( self, port, port_new=None, queue=True,
             _ev_names={True: 'added', False: 'removed', None: 'synthetic'} ):
+
+        if queue:
+            # WARNING: no libjack calls can be made in this callback, as they can crash the client
+            # Which is why they all get queued and poller gets signaled
+            self.port_evq.append((port, port_new))
+            os.write(self.port_evq_w, '\0')
+            return
+
         if isinstance(port, types.StringTypes):
             p, port = port, self.jack.get_ports(re.escape(port))
             if len(port) != 1: raise LookupError(p, port)
