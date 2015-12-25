@@ -102,6 +102,10 @@ Verify or check if already installed::
 Here versions 0.X (such as in example above) will indicate that JACK1 is
 installed and versions 1.X for JACK2.
 
+If installing same 0.124.1 jackd1 version on ARM board/arch, see also "JACK1
+segfault on ARM" section below, under "Troubleshooting and misc extra notes"
+section.
+
 
 Build/install PJSIP project and its python bindings
 ```````````````````````````````````````````````````
@@ -597,6 +601,52 @@ With this step completed, PagingServer should be starting properly after
 reboot, which is a good idea to test by rebooting the machine, to avoid future
 surprises, if that is possible/acceptable for a particular server where it is
 installed.
+
+
+
+Troubleshooting and misc extra notes
+------------------------------------
+
+This section contains various tips and info, which might be applicable to some
+corner-cases, so not much suited for the generic steps above.
+
+JACK1 segfault on ARM
+`````````````````````
+
+0.124.1 release of JACK1 (currently latest, as of 2015-12-26). which was made on
+2014-01-22 (and likely ones before it) when ran as e.g. ``jackd --no-realtime -d
+dummy`` crash with "Segmentation fault" error.
+
+Issue was fixed in the commit just 6 days later -
+`37914e19b94 <https://github.com/jackaudio/jack1/commit/37914e19b94>`_
+from 2014-01-28.
+
+All releases newer than 0.124.1 (see ``jackd --version`` or ``apt-cache show
+jackd1`` output) should not have this issue.
+
+To rebuild and install jackd1 on e.g. Debian Jessie, using latest sources from
+git, to include that particular commit with the fix, run the following::
+
+  # echo 'deb-src http://ftp.debian.org/debian jessie main' >>/etc/apt/sources.list
+  # apt-get update
+  # apt-get source jackd1
+  # apt-get install packaging-dev git xz-utils
+  # git clone --depth=1 https://github.com/jackaudio/jack1
+  # cd jack1
+  # git submodule init && git submodule update
+  # tar xf ../jack-audio-connection-kit_0.124.1*.debian.tar.xz
+  # sed -i '12 i\CFLAGS := -g -O2 -fstack-protector-strong\nCXXFLAGS := $(CFLAGS)\n' debian/rules
+  # sed -i\
+    '1 i\'"jack-audio-connection-kit (1:0.124.1+$(date +%Y%m%d)git$(git rev-parse HEAD | cut -c-8)-1) unstable; urgency=low"\
+    debian/changelog
+  # apt-get build-dep jackd1
+  # fakeroot debian/rules binary
+  # cd ..
+  # dpkg -i jackd1_*.deb libjack0_*.deb
+
+Same thing with other distros - grab ebuild, PKGBUILD, spec or whatever from the
+current jackd1 package and use it to build new package using sources from latest
+git instead of a release version.
 
 
 
