@@ -406,7 +406,9 @@ class JackClient(object):
         return self
 
     @classmethod
-    def run_in_slave_pid(cls): return cls().run()
+    def run_in_slave_pid(cls):
+        try: return cls().run()
+        except KeyboardInterrupt: pass
 
     def slave_start(self):
         import subprocess
