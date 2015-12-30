@@ -244,13 +244,13 @@ echo
 echo "Edit configuration file in: /etc/paging.conf"
 echo "At least domain/user/pass MUST be specified there in the [sip] section."
 echo
-echo "After that, start the service with: systemctl start jack-paging-out-all paging"
+echo "After that, start the service with: systemctl start paging-jack-out-all paging"
 echo "  check status: systemctl status jack@paging paging"
 echo "  check service log with: journalctl -ab -u paging"
 echo "  continuously 'tail' log with: journalctl -af -u paging"
 echo "  continuously tail all system logs with: journalctl -af"
 echo
 echo "If service has been started and is running successfully,"
-echo " enable it to run on boot with: systemctl enable jack-paging-out-all paging"
+echo " enable it to run on boot with: systemctl enable paging-jack-out-all paging"
 echo
 echo --------------------
