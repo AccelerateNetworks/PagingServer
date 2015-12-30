@@ -11,7 +11,7 @@ LimitRTPRIO=95
 LimitMEMLOCK=999999999
 ExecStart=/bin/bash -c "\
 	for c in $(aplay -L | grep '^\(default\|sysdefault\):CARD=' | sort -u);\
-	do alsa_out -d $c -r 8000 -p 2048 -n 4 &>/dev/null & done; wait -n ; kill 0 ; exit 1"
+	do alsa_out -d $c -r 8000 -p 2048 -n 4 & done; wait -n ; kill 0 ; exit 1"
 
 Restart=always
 RestartSec=300ms
