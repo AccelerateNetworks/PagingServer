@@ -17,4 +17,4 @@ StartLimitInterval=60s
 StartLimitBurst=20
 
 [Install]
-WantedBy=mutli-user.target
+WantedBy=multi-user.target
