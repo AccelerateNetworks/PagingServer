@@ -1,7 +1,9 @@
 [Service]
 User=%I
 SyslogIdentifier=jackd1-%I
-ExecStart=/usr/bin/env jackd --nozombies --no-realtime -d dummy
+LimitRTPRIO=95
+LimitMEMLOCK=999999999
+ExecStart=/usr/bin/env jackd --nozombies --realtime -d dummy -r 8000 -p 4096
 
 Restart=always
 RestartSec=1
