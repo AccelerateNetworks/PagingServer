@@ -226,7 +226,7 @@ Debian Jessie
 
   Running this one-liner should be the easiest way by far::
 
-    wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.from_repo.sh | bash
+    wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.from_debs.sh | bash
 
   Or, if ``wget ... | bash`` sounds too scary, same exact steps as in that
   script are::
