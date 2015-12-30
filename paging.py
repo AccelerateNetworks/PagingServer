@@ -301,6 +301,7 @@ class PSAccountState(PSCallbacks):
             'acc registration state (active: %s): %s %s',
             acc.reg_active, acc.reg_status, acc.reg_reason )
         if acc.reg_status >= 400:
+            self.server.destroy()
             raise PSAuthError( 'Account registration'
                 ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
 
