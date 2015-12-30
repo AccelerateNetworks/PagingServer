@@ -213,7 +213,7 @@ EOF
 	chk_install -y\
 		--pkgname=paging-server\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--requires 'pjproject,python,python-pjsua,python-jack'\
+		--requires 'pjproject,python,python-pkg-resources,python-pjsua,python-jack'\
 		--include extras.list\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
