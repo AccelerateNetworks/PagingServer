@@ -14,12 +14,19 @@ usage() {
 
 set -e -o pipefail
 
+apt_install() {
+	apt-get\
+		-o Dpkg::Options::="--force-confdef"\
+		-o Dpkg::Options::="--force-confold"\
+		--force-yes -y install "$@"
+}
+
 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3D021F1F4C670809
 echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
 apt-get update
 
-apt-get install --no-install-recommends jackd1 alsa-utils
-apt-get install paging-server python-systemd
+apt_install --no-install-recommends jackd1 alsa-utils
+apt_install paging-server python-systemd
 
 getent passwd paging &>/dev/null\
 	|| useradd -r -d /var/empty -s /bin/false -G audio paging
