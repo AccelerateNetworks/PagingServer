@@ -9,6 +9,7 @@ Restart=always
 RestartSec=1
 StartLimitInterval=10s
 StartLimitBurst=5
+# StartLimitAction=reboot
 
 [Install]
 WantedBy=mutli-user.target

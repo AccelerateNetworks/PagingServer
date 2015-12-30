@@ -1,5 +1,5 @@
 [Unit]
-After=network-online.target jack@paging.service
+After=network.target network-online.target jack@paging.service
 Wants=network-online.target
 Requires=jack@paging.service
 
@@ -11,6 +11,7 @@ Restart=always
 RestartSec=30
 StartLimitInterval=10min
 StartLimitBurst=10
+# StartLimitAction=reboot
 
 User=paging
 LimitRTPRIO=95

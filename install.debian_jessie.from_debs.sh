@@ -15,10 +15,13 @@ usage() {
 set -e -o pipefail
 
 apt_install() {
-	apt-get\
-		-o Dpkg::Options::="--force-confdef"\
-		-o Dpkg::Options::="--force-confold"\
-		--force-yes -y install "$@"
+	env\
+		DEBIAN_FRONTEND=noninteractive\
+		DEBIAN_PRIORITY=critical\
+		apt-get\
+			-o Dpkg::Options::="--force-confdef"\
+			-o Dpkg::Options::="--force-confold"\
+			--force-yes -y install "$@"
 }
 
 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3D021F1F4C670809
