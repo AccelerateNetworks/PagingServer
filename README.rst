@@ -224,24 +224,29 @@ Debian Jessie
 
 * Installing everything via debian packages from third-party repository.
 
-  Should be the easiest way by far::
+  Running this one-liner should be the easiest way by far::
 
-    % apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3D021F1F4C670809
-    % echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
-    % apt-get update
+    wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.from_repo.sh | bash
 
-    % apt-get install --no-install-recommends jackd1 alsa-utils
-    % apt-get install paging-server python-systemd
+  Or, if ``wget ... | bash`` sounds too scary, same exact steps as in that
+  script are::
 
-    % useradd -r -d /var/empty -s /bin/false -G audio paging
-    % install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
+    # apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3D021F1F4C670809
+    # echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
+    # apt-get update
+
+    # apt-get install --no-install-recommends jackd1 alsa-utils
+    # apt-get install paging-server python-systemd
+
+    # useradd -r -d /var/empty -s /bin/false -G audio paging
+    # install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
   Then edit config in ``/etc/paging.conf`` and start and/or enable jackd, its
   bridge to ALSA hardware and server::
 
-    % nano /etc/paging.conf
-    % systemctl start paging-jack-out-all paging
-    % systemctl enable paging-jack-out-all paging
+    # nano /etc/paging.conf
+    # systemctl start paging-jack-out-all paging
+    # systemctl enable paging-jack-out-all paging
 
   See "Usage" section for more details on how to run the thing.
 
@@ -254,8 +259,8 @@ Debian Jessie
   necessary by running `install.debian_jessie.sh`_ script from the repository as
   a root user (as it runs apt-get and such)::
 
-    % wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
-    % bash install.debian_jessie.sh -x
+    # wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
+    # bash install.debian_jessie.sh -x
 
   (running without -x flag will issue a warning message and exit)
 
