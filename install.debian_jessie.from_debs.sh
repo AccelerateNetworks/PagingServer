@@ -50,4 +50,8 @@ echo
 echo "If service has been started and is running successfully,"
 echo " enable it to run on boot with: systemctl enable paging-jack-out-all paging"
 echo
+echo "OrangePi PC Notes: Unmute Audio lineo in alsamixer by scrolling right and pressing m"
+echo "Start service with:  systemctl start paging-jack-out@hw:0 paging"
+echo "Enable service with: systemctl enable paging-jack-out@hw:0 paging"
+echo
 echo --------------------
