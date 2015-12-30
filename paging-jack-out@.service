@@ -7,9 +7,9 @@ User=paging
 Group=audio
 SyslogIdentifier=jackd1-paging-%I
 Environment=JACK_NO_START_SERVER=t
+LimitRTPRIO=95
+LimitMEMLOCK=999999999
 ExecStart=/usr/bin/alsa_out -d %I -r 8000 -p 2048 -n 4
-StandardOutput=null
-StandardError=null
 
 Restart=always
 RestartSec=300ms
