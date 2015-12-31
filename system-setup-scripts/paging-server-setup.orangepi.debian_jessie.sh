@@ -54,7 +54,7 @@ echo
 echo '-----===== Step: networking setup (replace NM with dhcpcd)'
 echo
 
-run_apt_get install dhcpcd5
+run_apt_get install --no-install-recommends dhcpcd5
 
 cat >/etc/dhcpcd.conf <<EOF
 duid
@@ -86,9 +86,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable dhcpcd
+systemctl disable resolvconf
 
-systemctl disable NetworkManager
-run_apt_get remove network-manager
+systemctl disable NetworkManager ModemManager pppd-dns
+run_apt_get remove network-manager modemmanager ppp
 run_apt_get autoremove
 
 
@@ -108,6 +109,7 @@ echo
 
 amixer sset 'Lineout volume control' 31
 amixer sset 'Audio lineout' on
+alsactl store
 
 
 echo
@@ -142,7 +144,7 @@ then
 	echo
 	echo "PagingServer has been started (should be running right now) and was enabled to start on boot."
 	echo "If it will keep failing (with some restart-limit threshold),"
-	echo " or its sound outputs will be crashing repeatedly, whole board will reboot."
+	echo " or its sound outputs will be crashing repeatedly, whole system will reboot."
 	echo "So make sure that either configuration always stays correct,"
 	echo " or run:  rm /etc/systemd/system/*.service.d/paging-reboot-on-fail.conf"
 	echo
