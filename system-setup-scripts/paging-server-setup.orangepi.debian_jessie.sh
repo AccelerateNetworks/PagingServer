@@ -88,6 +88,9 @@ systemctl daemon-reload
 systemctl enable dhcpcd
 systemctl disable resolvconf
 
+echo 'nameserver 8.8.8.8' >/etc/resolv.conf
+echo 'nameserver 8.8.4.4' >>/etc/resolv.conf
+
 systemctl disable NetworkManager ModemManager pppd-dns
 run_apt_get remove network-manager modemmanager ppp
 run_apt_get autoremove
