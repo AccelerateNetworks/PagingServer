@@ -33,7 +33,8 @@ apt_install paging-server python-systemd
 
 getent passwd paging &>/dev/null\
 	|| useradd -r -d /var/empty -s /bin/false -G audio paging
-install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
+[[ -e /etc/paging.conf ]]\
+	|| install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
 
 echo
