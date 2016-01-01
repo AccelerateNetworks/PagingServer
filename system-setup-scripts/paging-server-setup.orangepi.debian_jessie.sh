@@ -17,15 +17,16 @@ usage() {
 	exit 1
 }
 
-[[ "$1" != -x ]]\
-		|| grep -q '^Hardware[[:space:]]*:[[:space:]]*sun8i$' /proc/cpuinfo\
-		|| grep -q '^Debian GNU/Linux 8 ' /etc/issue || {
-	echo >&2 "Failed to match Hardware=sun8i in /proc/cpuinfo"
-	echo >&2 " or 'Debian GNU/Linux 8' in /etc/issue."
-	echo >&2 "This script specifically written for Debian Jessie on"
-	echo >&2 " OrangePi boards and should not work on any other platforms."
-	echo >&2 "Use -x option to disable this check and run it here anyway."
-	exit 1
+[[ "$1" == -x ]] || {
+	grep -q '^Hardware[[:space:]]*:[[:space:]]*sun8i$' /proc/cpuinfo\
+			&& grep -q '^Debian GNU/Linux 8 ' /etc/issue || {
+		echo >&2 "Failed to match Hardware=sun8i in /proc/cpuinfo"
+		echo >&2 " or 'Debian GNU/Linux 8' in /etc/issue."
+		echo >&2 "This script specifically written for Debian Jessie on"
+		echo >&2 " OrangePi boards and should not work on any other platforms."
+		echo >&2 "Use -x option to disable this check and run it here anyway."
+		exit 1
+	}
 }
 
 
