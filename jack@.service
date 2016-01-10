@@ -7,8 +7,8 @@ ExecStart=/usr/bin/env jackd --nozombies --realtime -d dummy -r 8000 -p 4096
 
 Restart=always
 RestartSec=1
-StartLimitInterval=10s
-StartLimitBurst=5
+StartLimitInterval=240s
+StartLimitBurst=60
 # StartLimitAction=reboot
 
 [Install]
