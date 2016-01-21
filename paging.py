@@ -8,7 +8,7 @@ from contextlib import contextmanager, closing
 from collections import deque
 import ConfigParser as configparser
 import os, sys, io, re, types, ctypes
-import time, signal, logging, inspect
+import time, signal, logging, inspect, pkg_resources
 
 
 class Conf(object):
@@ -37,6 +37,7 @@ class Conf(object):
     server_debug = False
     server_pjsua_log_level = 0
     server_sentry_dsn = ''
+    server_pjsua_cleanup_timeout = 5
 
     _conf_paths = ( 'paging.conf',
         '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf' )
@@ -303,7 +304,7 @@ class PSAccountState(PSCallbacks):
             'acc registration state (active: %s): %s %s',
             acc.reg_active, acc.reg_status, acc.reg_reason )
         if acc.reg_status >= 400:
-            self.server.destroy()
+            self.server.close()
             raise PSAuthError( 'Account registration'
                 ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
 
@@ -376,14 +377,32 @@ class PSCallState(PSCallbacks):
 
 ### PulseAudio Client
 
-# XXX: not implemented at all!
-
 class PulseClient(object):
 
-    def __init__(self): pass
-    def stop(self): pass
-    def set_music_mute(self, state): pass
-    def slave_start(self): pass
+    def __init__(self):
+        from pulsectl import Pulse
+        # Running that might start pa pid, so defer it until we actually
+        #  init audio output, and not started to just display some info and exit.
+        self.pulse_connect, self.pulse = Pulse, None
+
+    def init(self):
+        self.pulse = self.pulse_connect('paging')
+        self.pulse.event_mask_set('sink_input')
+        self.pulse.event_callback_set(self.mute_new_streams)
+        self.music_muted = False
+
+    def close(self):
+        if self.pulse:
+            self.pulse.close()
+            self.pulse = None
+
+    def set_music_mute(self, state):
+        self.music_muted = state
+        for si in self.pulse.sink_input_list(): self.pulse.mute(si, state)
+
+    def mute_new_streams(self, ev_or_idx):
+        if ev.t != 'new' or ev.facility != 'sink_input': return
+        self.pulse.sink_input_mute(ev.index, self.music_muted)
 
 
 
@@ -399,8 +418,8 @@ class PagingServer(object):
 
     @err_report
     def __init__(self, conf, sd_cycle=None):
-        import pjsua as pj
-        self.pj = pj
+        import pjsua
+        self.pj = pjsua
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
 
@@ -445,14 +464,16 @@ class PagingServer(object):
             self.pj_out_port = m['id']
             self.log.debug('Using output port: %s [%s]', m['name'], self.pj_out_port)
 
-        self.pulse.slave_start() # XXX: jack -> pulse
+        try: self.pulse.init()
+        except Exception as err:
+            self.log.error('Failed to initialize PulseAudio controls: %s', err)
+            raise
 
     @err_report_fatal
     def init(self):
         assert not self.lib
 
         self.log.debug('pulse init')
-
         self.pulse = PulseClient()
 
         self.log.debug('pjsua init')
@@ -479,23 +500,52 @@ class PagingServer(object):
         lib.start(with_thread=True)
         lib.c = self.pj._pjsua
 
+    def _pjsua_destroy(self):
+        # Default Lib.destroy() tends to hang forever
+        try: pjsua_ver = pkg_resources.get_distribution('pjsua').parsed_version
+        except Exception as err:
+            self.log.debug('Failed to get pjsua version number: %s', err)
+            pjsua_ver = None
+        if not pjsua_ver or pjsua_ver > pkg_resources.parse_version('2.4.5'):
+            self.log.debug('Using pjsua native lib.destroy() method because of version check')
+            return self.lib.destroy()
+        self.lib.destroy = lambda: None
+        timeout = self.conf.server_pjsua_cleanup_timeout
+        ts_deadline = mono_time() + timeout
+        if self.lib._has_thread:
+            self.lib._has_thread = False
+            self.lib._quit = self.pj._lib._quit = 1
+            for n in xrange(400):
+                if mono_time() > ts_deadline:
+                    self.log.debug('cleanup - pjsua thread has failed to exit')
+                    break
+                if self.pj._lib._quit == 2 or self.lib._quit == 2: break
+                self.lib.handle_events(1)
+                time.sleep(0.05)
+        self.pj._lib._quit = 2
+        signal.signal( signal.SIGALRM, lambda sig,frm:\
+            self.log.debug('cleanup - pjsua lib destroy() has failed to finish') )
+        signal.alarm(max(2, int(ts_deadline - mono_time()))) # give it at least 2s
+        try: self.pj._pjsua.destroy()
+        finally: signal.alarm(0)
+        self.pj._lib = None
+
     @err_report_fatal
-    def destroy(self):
-        if not self.lib: return
-
-        self.log.debug('pjsua cleanup')
-        self.lib.destroy()
-        self.lib = None
-
-        self.log.debug('pulse cleanup')
-        self.pulse.stop()
-        self.pulse = None
+    def close(self):
+        if self.lib:
+            self.log.debug('pjsua cleanup')
+            self._pjsua_destroy()
+            self.lib = None
+        if self.pulse:
+            self.log.debug('pulse cleanup')
+            self.pulse.close()
+            self.pulse = None
 
     def __enter__(self):
         self.init()
         return self
-    def __exit__(self, *err): self.destroy()
-    def __del__(self): self.destroy()
+    def __exit__(self, *err): self.close()
+    def __del__(self): self.close()
 
 
     @err_report_fatal
@@ -503,8 +553,11 @@ class PagingServer(object):
         assert self.lib, 'Must be initialized before run()'
         self.init_outputs()
 
-        acc = self.lib.create_account(self.pj.AccountConfig(
-            *map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass']) ))
+        domain, user, pw = map(ft.partial(self.conf.get, 'sip'), ['domain', 'user', 'pass'])
+        if not domain or domain == '<sip server>':
+            raise PagingServerError( 'SIP account credentials'
+                ' (domain, user, password) were not configured, refusing to start' )
+        acc = self.lib.create_account(self.pj.AccountConfig(domain, user, pw))
         acc.set_callback(PSAccountState(self))
 
         self.running = True
@@ -780,7 +833,7 @@ def main(args=None, defaults=None):
     log.info('Starting PagingServer...')
     with server_ctx as server:
         for sig in signal.SIGINT, signal.SIGTERM:
-            signal.signal(sig, lambda sig,frm: server.destroy())
+            signal.signal(sig, lambda sig,frm: server.close())
         try: server.run()
         except (PSConfigurationError, PSAuthError) as err:
             print('ERROR [{}]: {}'.format(err.__class__.__name__, err), file=sys.stderr)
