@@ -1,6 +1,13 @@
-# Testing configs and samples
 /paging.conf
 /callram.conf
 /*.wav
 /*.mp3
 /*.ogg
+
+/*.egg-info
+/dist
+
+/dst
+/sync.sh
+/test.py
+/TODO
