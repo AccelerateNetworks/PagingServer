@@ -22,19 +22,10 @@ class Conf(object):
     audio_klaxon_max_length = 10.0
     audio_pjsua_device = '^default$'
     audio_pjsua_conf_port = '' # there should be only one
-
-    # XXX: jack -> pulse
-    # audio_jack_autostart = True
-    # audio_jack_server_name = ''
-    # audio_jack_client_name = ''
-    # audio_jack_client_arg = '--jack-client-pid'
-
-    # XXX: jack -> pulse
-    # audio_jack_output_ports = ''
-    # audio_jack_music_client_name = '^mpd\.paging:(.*)$'
-    # audio_jack_music_links = 'left---(left|playback_1) right---(right|playback_2)'
+    audio_pulse_mute = '^application\.name=paplay$'
 
     server_debug = False
+    server_dump_pulse_props = False
     server_pjsua_log_level = 0
     server_sentry_dsn = ''
     server_pjsua_cleanup_timeout = 5
@@ -379,20 +370,21 @@ class PSCallState(PSCallbacks):
 
 class PulseClient(object):
 
-    def __init__(self):
+    def __init__(self, si_filter_regexp, si_filter_debug=False):
         from pulsectl import ( Pulse,
             PulseLoopStop, PulseIndexError, PulseError )
         # Running that might start pa pid, so defer it until we actually
         #  init audio output, and not started to just display some info and exit.
         self._connect, self.pulse = Pulse, None
+        self.si_filter_regexp, self.si_filter_debug = si_filter_regexp, si_filter_debug
         self.PulseIndexError, self.PulseError, self.PulseLoopStop =\
             PulseIndexError, PulseError, PulseLoopStop
         self.log = get_logger()
 
     def init(self):
         self.pulse = self._connect('paging')
-        self.pulse.event_mask_set('sink_input')
-        self.pulse.event_callback_set(self._handle_new_sink)
+        # self.pulse.event_mask_set('sink_input')
+        # self.pulse.event_callback_set(self._handle_new_sink)
         self.si_queue = deque()
         self.set_music_mute(False)
 
@@ -405,23 +397,34 @@ class PulseClient(object):
         self.music_muted = state
         for si in self.pulse.sink_input_list():
             self.si_queue.append(si.index)
+        self.poll() # XXX: wakeup here
 
-    def _handle_new_sink(self, ev):
-        if ev.t != 'new' or ev.facility != 'sink_input': return
-        self.si_queue.append(ev.index)
-        raise self.PulseLoopStop
+    # def _handle_new_sink(self, ev):
+    # 	if ev.t != 'new' or ev.facility != 'sink_input': return
+    # 	self.si_queue.append(ev.index)
+    # 	raise self.PulseLoopStop
 
     def poll(self, timeout=None):
         while self.si_queue:
             idx = self.si_queue.popleft()
             try:
                 si = self.pulse.sink_input_info(idx)
-                # XXX: filter sink inputs here
+                for k, v in si.proplist.viewitems():
+                    v = '{}={}'.format(k, v)
+                    m = re.search(self.si_filter_regexp, v)
+                    if self.si_filter_debug:
+                        self.log.debug(' - prop%s: %r', ['', '[MATCH]'][bool(m)], v)
+                    if m: break
+                else:
+                    self.log.debug('Ignoring unmatched sink-input: %s', si)
+                    continue
                 self.log.debug( 'Setting mute to %s'
                     ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
                 self.pulse.mute(si, self.music_muted)
             except self.PulseIndexError: continue
-        self.pulse.event_listen(timeout)
+        # XXX: need to send wakeup event from another thread to stop poll here
+        # XXX: as otherwise other thread tries to access loop and fails
+        # self.pulse.event_listen(timeout)
 
 
 
@@ -493,7 +496,8 @@ class PagingServer(object):
         assert not self.lib
 
         self.log.debug('pulse init')
-        self.pulse = PulseClient()
+        self.pulse = PulseClient(
+            self.conf.audio_pulse_mute, self.conf.server_dump_pulse_props )
 
         self.log.debug('pjsua init')
 
@@ -600,7 +604,8 @@ class PagingServer(object):
                     self.sd_cycle(ts)
                     continue
             if not (self.running and self.lib): break
-            self.pulse.poll(max_poll_delay)
+            time.sleep(max_poll_delay) # XXX: pulse-poll
+            # self.pulse.poll(max_poll_delay)
             if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
         self.log.debug('pjsua event loop has been stopped')
 
@@ -715,8 +720,6 @@ def main(args=None, defaults=None):
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
     group.add_argument('--dump-pjsua-conf-ports', action='store_true',
         help='Dump the list of conference ports that pjsua creates after init and exit.')
-    group.add_argument('--dump-jack-ports', action='store_true', # XXX: jack -> pulse
-        help='Dump the list of jack input/output ports that are available.')
     group.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file from pjsua output and exit.'
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
@@ -727,6 +730,8 @@ def main(args=None, defaults=None):
             ' is failing or going on. Can be especially useful on first runs.')
     group.add_argument('-d', '--debug',
         action='store_true', help='Verbose operation mode.')
+    group.add_argument('--dump-pulse-props', action='store_true',
+        help='Dump all properties of pulse streams as they get matched. Requires --debug.')
     group.add_argument('--pjsua-log-level',
         metavar='0-10', type=int,
         help='pjsua lib logging level. Only used when --debug is enabled.'
@@ -765,7 +770,7 @@ def main(args=None, defaults=None):
     conf = Conf()
     for k in conf._conf_sections:
         update_conf_from_file(conf, conf_file, section=k, prefix='{}_'.format(k))
-    for k in 'debug', 'pjsua_log_level', 'sentry_dsn':
+    for k in 'debug', 'dump_pulse_props', 'pjsua_log_level', 'sentry_dsn':
         v = getattr(opts, k)
         if v is not None: setattr(conf, 'server_{}'.format(k), v)
 
@@ -819,24 +824,6 @@ def main(args=None, defaults=None):
         with server_ctx as server:
             ports = server.get_pj_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
-        return
-
-    if opts.dump_jack_ports: # XXX: jack -> pulse
-        raise NotImplementedError
-        import jack
-        client = jack.Client( 'port-list',
-            servername=conf.audio_jack_server_name or None,
-            no_start_server=not conf.audio_jack_autostart )
-        ports = dict()
-        for p in client.get_ports(is_audio=True):
-            port = dict()
-            for k in dir(p):
-                if k not in ['name', 'uuid']: continue
-                port[k] = getattr(p, k)
-            port['type'] = 'input (player or other sound source)'\
-                if p.is_output else 'output (speakers, audio card or such)'
-            ports[port['name']] = port
-        pprint_infos(ports, 'Detected jack ports')
         return
 
     if opts.test_audio_file:
