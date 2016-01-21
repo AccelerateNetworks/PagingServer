@@ -108,12 +108,24 @@ grep -q '^Storage=' /etc/systemd/journald.conf\
 
 
 echo
-echo '-----===== Step: alsa levels/mute setup'
+echo '-----===== Step: alsa config/levels/mute setup'
 echo
 
 amixer sset 'Lineout volume control' 31
 amixer sset 'Audio lineout' on
 alsactl store
+
+cat >/etc/asound.conf <<EOF
+pcm.!default {
+  # See http://www.alsa-project.org/alsa-doc/alsa-lib/pcm_plugins.html#pcm_plugins_softvol
+  type softvol
+  slave.pcm "sysdefault:CARD=audiocodec"
+  control.name "Soft-amp PCM"
+  hint.description "Sound thru alsa-softvol amp thing"
+  max_dB 32.0 # default is 0
+  # min_dB -51.0 # default is -51.0
+}
+EOF
 
 
 echo
@@ -134,8 +146,10 @@ echo '-----===== Step: starting/enabling PagingServer-related stuff'
 echo
 
 systemctl start jack@paging
-systemctl start paging-jack-out@hw:0
-systemctl enable paging-jack-out@hw:0
+systemctl stop paging-jack-out@hw:0 ||:
+systemctl disable paging-jack-out@hw:0 ||:
+systemctl start paging-jack-out@default
+systemctl enable paging-jack-out@default
 
 if awk 'p&&/^\[/ {p=0} /^\[sip\]$/ {p=1} p&&/^ *(domain|user|pass) *= *<(sip server|username|password)>$/ {exit 1}' /etc/paging.conf
 then

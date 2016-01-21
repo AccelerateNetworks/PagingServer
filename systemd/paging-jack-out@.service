@@ -13,8 +13,8 @@ ExecStart=/usr/bin/alsa_out -d %I -r 8000 -p 2048 -n 4
 
 Restart=always
 RestartSec=300ms
-StartLimitInterval=60s
-StartLimitBurst=20
+StartLimitInterval=240s
+StartLimitBurst=200
 # StartLimitAction=reboot
 
 [Install]

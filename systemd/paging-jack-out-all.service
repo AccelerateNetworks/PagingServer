@@ -15,8 +15,8 @@ ExecStart=/bin/bash -c "\
 
 Restart=always
 RestartSec=300ms
-StartLimitInterval=120s
-StartLimitBurst=50
+StartLimitInterval=240s
+StartLimitBurst=200
 # StartLimitAction=reboot
 
 [Install]
