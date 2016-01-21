@@ -7,7 +7,7 @@ from os.path import join, exists, isfile, expanduser, dirname
 from contextlib import contextmanager, closing
 from collections import deque
 import ConfigParser as configparser
-import os, sys, io, re, types, ctypes
+import os, sys, io, re, types, ctypes, subprocess
 import time, signal, logging, inspect, pkg_resources
 
 
@@ -177,7 +177,7 @@ def mono_time():
 
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     if path and path.endswith('.wav'): return path
-    import subprocess, hashlib, base64, tempfile, atexit
+    import hashlib, base64, tempfile, atexit
 
     self = ffmpeg_towav
     if not hasattr(self, 'init'):
@@ -380,16 +380,21 @@ class PSCallState(PSCallbacks):
 class PulseClient(object):
 
     def __init__(self):
-        from pulsectl import Pulse
+        from pulsectl import ( Pulse,
+            PulseLoopStop, PulseIndexError, PulseError )
         # Running that might start pa pid, so defer it until we actually
         #  init audio output, and not started to just display some info and exit.
-        self.pulse_connect, self.pulse = Pulse, None
+        self._connect, self.pulse = Pulse, None
+        self.PulseIndexError, self.PulseError, self.PulseLoopStop =\
+            PulseIndexError, PulseError, PulseLoopStop
+        self.log = get_logger()
 
     def init(self):
-        self.pulse = self.pulse_connect('paging')
+        self.pulse = self._connect('paging')
         self.pulse.event_mask_set('sink_input')
-        self.pulse.event_callback_set(self.mute_new_streams)
-        self.music_muted = False
+        self.pulse.event_callback_set(self._handle_new_sink)
+        self.si_queue = deque()
+        self.set_music_mute(False)
 
     def close(self):
         if self.pulse:
@@ -398,11 +403,25 @@ class PulseClient(object):
 
     def set_music_mute(self, state):
         self.music_muted = state
-        for si in self.pulse.sink_input_list(): self.pulse.mute(si, state)
+        for si in self.pulse.sink_input_list():
+            self.si_queue.append(si.index)
 
-    def mute_new_streams(self, ev_or_idx):
+    def _handle_new_sink(self, ev):
         if ev.t != 'new' or ev.facility != 'sink_input': return
-        self.pulse.sink_input_mute(ev.index, self.music_muted)
+        self.si_queue.append(ev.index)
+        raise self.PulseLoopStop
+
+    def poll(self, timeout=None):
+        while self.si_queue:
+            idx = self.si_queue.popleft()
+            try:
+                si = self.pulse.sink_input_info(idx)
+                # XXX: filter sink inputs here
+                self.log.debug( 'Setting mute to %s'
+                    ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
+                self.pulse.mute(si, self.music_muted)
+            except self.PulseIndexError: continue
+        self.pulse.event_listen(timeout)
 
 
 
@@ -511,27 +530,37 @@ class PagingServer(object):
             return self.lib.destroy()
         self.lib.destroy = lambda: None
         timeout = self.conf.server_pjsua_cleanup_timeout
-        ts_deadline = mono_time() + timeout
-        if self.lib._has_thread:
-            self.lib._has_thread = False
-            self.lib._quit = self.pj._lib._quit = 1
-            for n in xrange(400):
-                if mono_time() > ts_deadline:
-                    self.log.debug('cleanup - pjsua thread has failed to exit')
-                    break
-                if self.pj._lib._quit == 2 or self.lib._quit == 2: break
-                self.lib.handle_events(1)
-                time.sleep(0.05)
-        self.pj._lib._quit = 2
-        signal.signal( signal.SIGALRM, lambda sig,frm:\
-            self.log.debug('cleanup - pjsua lib destroy() has failed to finish') )
-        signal.alarm(max(2, int(ts_deadline - mono_time()))) # give it at least 2s
-        try: self.pj._pjsua.destroy()
-        finally: signal.alarm(0)
-        self.pj._lib = None
+        timeout_kill = min(timeout * 1.5, timeout + 3)
+        kill_proc = subprocess.Popen( # in case everything else fails...
+            ['sh', '-c', 'sleep {} && kill -9 {}'.format(timeout_kill, os.getpid())],
+            preexec_fn=os.setsid )
+        try:
+            ts_deadline = mono_time() + timeout
+            signal.alarm(int(timeout + 2))
+            if self.lib._has_thread:
+                self.lib._has_thread = False
+                self.lib._quit = self.pj._lib._quit = 1
+                for n in xrange(400):
+                    if mono_time() > ts_deadline:
+                        self.log.debug('cleanup - pjsua thread has failed to exit')
+                        break
+                    if self.pj._lib._quit == 2 or self.lib._quit == 2: break
+                    self.lib.handle_events(1)
+                    time.sleep(0.05)
+            self.pj._lib._quit = 2
+            signal.alarm(max(2, int(ts_deadline - mono_time())))
+            signal.signal( signal.SIGALRM, lambda sig,frm:\
+                self.log.debug('cleanup - pjsua lib destroy() has failed to finish') )
+            try: self.pj._pjsua.destroy()
+            finally: signal.alarm(0)
+            self.pj._lib = None
+        finally:
+            if kill_proc.poll() is None: kill_proc.terminate()
+            kill_proc.wait()
 
     @err_report_fatal
     def close(self):
+        self.log.debug('server cleanup started...')
         if self.lib:
             self.log.debug('pjsua cleanup')
             self._pjsua_destroy()
@@ -571,7 +600,7 @@ class PagingServer(object):
                     self.sd_cycle(ts)
                     continue
             if not (self.running and self.lib): break
-            time.sleep(max_poll_delay)
+            self.pulse.poll(max_poll_delay)
             if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
         self.log.debug('pjsua event loop has been stopped')
 
