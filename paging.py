@@ -5,7 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from os.path import join, exists, isfile, expanduser, dirname
 from contextlib import contextmanager, closing
-from collections import deque
+from collections import deque, OrderedDict
 from heapq import heappush, heappop, heappushpop
 import ConfigParser as configparser
 import os, sys, io, re, types, ctypes, subprocess, threading
@@ -26,6 +26,9 @@ class Conf(object):
     audio_pjsua_conf_port = '' # there should be only one
     audio_pulse_mute = '^application\.name=paplay$'
 
+    calls_hold_concurrent = False
+    calls_hang_up_after_minutes = 5.0
+
     server_debug = False
     server_dump_pulse_props = False
     server_pjsua_log_level = 0
@@ -34,7 +37,7 @@ class Conf(object):
 
     _conf_paths = ( 'paging.conf',
         '/etc/paging.conf', 'callpipe.conf', '/etc/callpipe.conf' )
-    _conf_sections = 'sip', 'audio', 'server'
+    _conf_sections = 'sip', 'audio', 'calls', 'server'
 
     def __repr__(self): return repr(vars(self))
     def get(self, *k): return getattr(self, '_'.join(k))
@@ -274,16 +277,22 @@ class PSAccountState(PSCallbacks):
     @err_report
     def __init__(self, server):
         self.server, self.cbs = server, server.pj.AccountCallback()
-        self.call_queue, self.total_calls, self.call_active = deque(), 0, False
+        self.call_queue, self.total_calls, self.call_active = deque(), 0, None
+        self.hang_up_after = self.server.conf.calls_hang_up_after_minutes * 60.0
         self.log = get_logger()
 
+    @err_report
     def call_init(self, cs):
         self.log.info('Handling call: %s', cs.caller)
         self.call_active = cs
         self.server.set_music_mute(True)
         self.server.wav_play_sync(self.server.conf.audio_klaxon)
         cs.call.answer()
+        if self.hang_up_after > 0:
+            self.server.poll_callback(ft.partial(
+                self.on_cs_timeout, cs, mono_time() ), self.hang_up_after)
 
+    @err_report
     def call_cleanup(self, cs):
         if not self.call_active: return
         self.call_active = False
@@ -304,7 +313,8 @@ class PSAccountState(PSCallbacks):
         self.total_calls += 1
         call.pj = self.server.pj
         cs = PSCallState(self, self.total_calls, call)
-        if not self.call_active: self.call_init(cs)
+        if not self.server.conf.calls_hold_concurrent\
+            or not self.call_active: self.call_init(cs)
         else:
             self.log.info( 'Queueing parallel call/announcement %s, because'
                 ' another one is already in-progress: %s', cs.caller, self.call_active.caller )
@@ -320,8 +330,24 @@ class PSAccountState(PSCallbacks):
         if self.call_queue: self.call_init(self.call_queue.popleft())
         else: self.server.set_music_mute(False)
 
+    @err_report
+    def on_cs_timeout(self, cs, ts0=None):
+        if cs.call_state in ['null', 'disconnected', 'terminated']: return
+        ts_diff = mono_time() - ts0
+        log.debug(
+            'Terminating call [%s] (state: %s) due'
+                ' to call-duration limit (%ds), elapsed: %ds',
+            cs.caller, cs.call_state, self.hang_up_after, ts_diff )
+        cs.call.hangup(reason='call duration limit')
+
+
 
 class PSCallState(PSCallbacks):
+
+    # Includes "terminated" state from pjsip/src/pjsip-ua/sip_inv.c
+    # Updated on pjsua callbacks only.
+    call_state_names = OrderedDict(enumerate(( 'null calling'
+        ' incoming early connecting confirmed disconnected terminated' ).split()))
 
     @err_report
     def __init__(self, acc, call_id, call):
@@ -332,7 +358,7 @@ class PSCallState(PSCallbacks):
         self.log = get_logger()
 
         ci = self.call.info()
-        self.call_state = ci.state_text.lower()
+        self.call_state = self.call_state_names.get(ci.state, 'unknown-init')
         self.media_state = self.pj_media_states[ci.media_state]
         self.caller = ci.remote_uri
         m = re.findall(r'<([^>]+)>', self.caller)
@@ -347,12 +373,11 @@ class PSCallState(PSCallbacks):
     @err_report
     def on_state(self):
         ci = self.call.info()
-        state_last, self.call_state = self.call_state, ci.state_text.lower()
+        state_last, self.call_state = self.call_state, self.call_state_names.get(ci.state, 'unknown')
         self.log.debug(
             'call [%s] state change: %r -> %r (SIP status: %s %s)',
             self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
-        if self.call_state == 'disconnctd':
-            self.acc.on_cs_disconnected(self)
+        if self.call_state == 'disconncted': self.acc.on_cs_disconnected(self)
 
     @err_report
     def on_media_state(self, _state_dict=dict()):
@@ -396,8 +421,8 @@ class PulseClient(object):
     def set_music_mute(self, state):
         self.music_muted = state
         self.si_queue.append(None) # "mute all signal"
-        self.poll_wakeup()
 
+    @err_report
     def _handle_new_sink(self, ev):
         if ev.t != 'new' or ev.facility != 'sink_input': return
         self.si_queue.append(ev.index)
@@ -407,6 +432,7 @@ class PulseClient(object):
         if not self.pulse: return
         self.pulse.event_listen_stop()
 
+    @err_report
     def poll(self, timeout=None):
         # Only safe to call pulse stuff here, before entering loop
         while self.si_queue:
@@ -451,6 +477,7 @@ class PagingServer(object):
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
         self.running, self._poll_callbacks, self._locks = None, list(), set()
+        self._poll_lock, self._poll_hold = threading.Lock(), threading.Lock()
 
 
     def match_info(self, infos, spec, kind):
@@ -592,60 +619,70 @@ class PagingServer(object):
     def __del__(self): self.close()
 
 
+    @contextmanager
+    def poll_wakeup(self, loop_interval=0.1):
+        'Anything poll-related MUST be done in this context.'
+        if not self.pulse: return
+        with self._poll_hold:
+            while True:
+                # wakeup only works when loop is actually started,
+                #  which might not be the case regardless of any locks.
+                self.pulse.poll_wakeup()
+                if self._poll_lock.acquire(False): break
+                time.sleep(loop_interval)
+            try: yield
+            finally: self._poll_lock.release()
+
+    def poll_callback(self, func, delay=None, ts=None):
+        with self.poll_wakeup():
+            if ts is None: ts = mono_time()
+            ts += delay or 0
+            heappush(self._poll_callbacks, (ts, func))
+
     def poll_lock(self, delay):
         lock = threading.Lock()
         def lock_release_safe():
-            self.log.debug('Lock release: %s', lock)
             try: lock.release()
             except: pass
         self._locks.add(lock_release_safe)
         try:
             lock.acquire()
             self.poll_callback(lock_release_safe, delay)
-            self.poll_wakeup()
             lock.acquire()
         finally:
             lock_release_safe()
-            self._locks.remove(lock_release_safe)
-
-    def poll_callback(self, func, delay=None, ts=None):
-        if ts is None: ts = mono_time()
-        ts += delay or 0
-        heappush(self._poll_callbacks, (ts, func))
-
-    def poll_wakeup(self):
-        if not self.pulse: return
-        self.pulse.poll_wakeup()
+            self._locks.discard(lock_release_safe)
 
     def poll(self, timeout=None):
         if threading.current_thread().name != 'MainThread':
             assert timeout
-            return self.poll_lock(timeout).acquire()
+            return self.poll_lock(timeout)
         ts = mono_time()
         self.running, ts_deadline = True, timeout and mono_time() + timeout
         while True:
-            if not self.sd_cycle or not self.sd_cycle.ts_next: delay = 600
-            else:
-                delay = self.sd_cycle.ts_next - ts
-                if delay <= 0:
-                    self.sd_cycle(ts)
-                    continue
-            if not (self.running and self.lib): break
-            if ts_deadline: delay = min(delay, ts_deadline - ts)
-            if self._poll_callbacks:
-                while True:
-                    ts_cb, cb = self.poll_callbacks[0]
-                    if ts_cb >= ts:
-                        heappop(self.poll_callbacks)
+            with self._poll_hold: self._poll_lock.acquire() # fuck threads
+            try:
+                ts = mono_time()
+                if not self.sd_cycle or not self.sd_cycle.ts_next: delay = 600
+                else:
+                    delay = self.sd_cycle.ts_next - ts
+                    if delay <= 0:
+                        self.sd_cycle(ts)
+                        continue
+                if not (self.running and self.lib): break
+                if ts_deadline: delay = min(delay, ts_deadline - ts)
+                while self._poll_callbacks:
+                    ts_cb, cb = self._poll_callbacks[0]
+                    if ts >= ts_cb:
+                        heappop(self._poll_callbacks)
                         cb()
                     else:
                         delay = min(delay, ts_cb - ts)
                         break
-            # self.log.debug('poll delay: %.1f', delay)
-            self.pulse.poll(max(0, delay))
-            if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
-            ts = mono_time()
-            if ts > ts_deadline: break
+                self.pulse.poll(max(0, delay))
+                if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
+                if ts > ts_deadline: break
+            finally: self._poll_lock.release()
 
     @err_report_fatal
     def run(self):
@@ -667,7 +704,7 @@ class PagingServer(object):
         self.running = False
         if self._locks:
             for release_func in self._locks: release_func()
-            self._locks = None
+            self._locks.clear()
         self.poll_wakeup()
 
 
@@ -684,7 +721,7 @@ class PagingServer(object):
         self.lib.conf_connect(conf_port, self.pj_out_port)
 
     def set_music_mute(self, state):
-        self.pulse.set_music_mute(state)
+        with self.poll_wakeup(): self.pulse.set_music_mute(state)
 
 
     @contextmanager
