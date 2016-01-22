@@ -260,8 +260,6 @@ class PSAccountState(PSCallbacks):
 
     def call_init(self, cs):
         self.log.info('Handling call: %s', cs.caller)
-        # XXX: SIP events, watchdog calls should be ran while this happens
-        #  but shouldn't be a problem if klaxon is no more than a few seconds long
         self.call_active = cs
         self.server.set_music_mute(True)
         self.server.wav_play_sync(self.server.conf.audio_klaxon)
