@@ -29,6 +29,7 @@ class Conf(object):
     server_debug = False
     server_dump_pulse_props = False
     server_pjsua_log_level = 0
+    server_sentry_dsn = ''
     server_pjsua_cleanup_timeout = 5
 
     _conf_paths = ( 'paging.conf',
@@ -49,7 +50,24 @@ class Conf(object):
 
 ### Utility boilerplates
 
-log = None
+log = raven_client = None
+
+def err_report_wrapper(func=None, fatal=None):
+    def _err_report_wrapper(func):
+        @ft.wraps(func)
+        def _wrapper(*args, **kws):
+            try: return func(*args, **kws)
+            except Exception as err:
+                if raven_client: raven_client.captureException()
+                if fatal is None and func.func_name == '__init__': raise # implicit
+                elif fatal: raise
+                if log: log.exception('ERROR (%s): %s', func.func_name, err)
+        return _wrapper
+    return _err_report_wrapper if func is None else _err_report_wrapper(func)
+
+err_report = err_report_wrapper
+err_report_only = err_report_wrapper(fatal=False)
+err_report_fatal = err_report_wrapper(fatal=True)
 
 def get_logger(logger=None, root=['__main__', 'paging']):
     'Returns logger for calling class or function name and module path.'
@@ -253,6 +271,7 @@ class PSCallbacks(object):
 
 class PSAccountState(PSCallbacks):
 
+    @err_report
     def __init__(self, server):
         self.server, self.cbs = server, server.pj.AccountCallback()
         self.call_queue, self.total_calls, self.call_active = deque(), 0, False
@@ -269,6 +288,7 @@ class PSAccountState(PSCallbacks):
         if not self.call_active: return
         self.call_active = False
 
+    @err_report_fatal
     def on_reg_state(self):
         acc = self.account.info()
         self.log.debug(
@@ -279,6 +299,7 @@ class PSAccountState(PSCallbacks):
             raise PSAuthError( 'Account registration'
                 ' failure: {} {}'.format(acc.reg_status, acc.reg_reason) )
 
+    @err_report
     def on_incoming_call(self, call):
         self.total_calls += 1
         call.pj = self.server.pj
@@ -289,9 +310,11 @@ class PSAccountState(PSCallbacks):
                 ' another one is already in-progress: %s', cs.caller, self.call_active.caller )
             self.call_queue.append(cs)
 
+    @err_report
     def on_cs_media_activated(self, cs, conf_slot):
         self.server.conf_port_connect(conf_slot)
 
+    @err_report
     def on_cs_disconnected(self, cs):
         self.call_cleanup(cs)
         if self.call_queue: self.call_init(self.call_queue.popleft())
@@ -300,6 +323,7 @@ class PSAccountState(PSCallbacks):
 
 class PSCallState(PSCallbacks):
 
+    @err_report
     def __init__(self, acc, call_id, call):
         self.cbs = call.pj.CallCallback(call)
         self.acc, self.call_id, self.call = acc, call_id, call
@@ -320,6 +344,7 @@ class PSCallState(PSCallbacks):
 
         call.set_callback(self)
 
+    @err_report
     def on_state(self):
         ci = self.call.info()
         state_last, self.call_state = self.call_state, ci.state_text.lower()
@@ -329,6 +354,7 @@ class PSCallState(PSCallbacks):
         if self.call_state == 'disconnctd':
             self.acc.on_cs_disconnected(self)
 
+    @err_report
     def on_media_state(self, _state_dict=dict()):
         ci = self.call.info()
         state_last, self.media_state = self.media_state, self.pj_media_states[ci.media_state]
@@ -418,6 +444,7 @@ class PagingServer(object):
 
     lib = pj_out_dev = pj_out_port = None
 
+    @err_report
     def __init__(self, conf, sd_cycle=None):
         import pjsua
         self.pj = pjsua
@@ -471,6 +498,7 @@ class PagingServer(object):
             self.log.error('Failed to initialize PulseAudio controls: %s', err)
             raise
 
+    @err_report_fatal
     def init(self):
         assert not self.lib
 
@@ -545,6 +573,7 @@ class PagingServer(object):
             if kill_proc.poll() is None: kill_proc.terminate()
             kill_proc.wait()
 
+    @err_report_fatal
     def close(self):
         self.stop()
         if self.lib:
@@ -618,6 +647,7 @@ class PagingServer(object):
             ts = mono_time()
             if ts > ts_deadline: break
 
+    @err_report_fatal
     def run(self):
         assert self.lib, 'Must be initialized before run()'
         self.init_outputs()
@@ -765,6 +795,9 @@ def main(args=None, defaults=None):
         help='pjsua lib logging level. Only used when --debug is enabled.'
             ' Zero is only for fatal errors, higher levels are more noisy.'
             ' Default: {}'.format(defaults.server_pjsua_log_level))
+    group.add_argument('--sentry-dsn', metavar='dsn',
+        help='Use Sentry to capture errors/logging using "raven" module.'
+            ' Default: {}'.format(defaults.server_sentry_dsn))
     group.add_argument('--version', action='version',
         version='%(prog)s version-unknown (see python package version)')
 
@@ -795,13 +828,20 @@ def main(args=None, defaults=None):
     conf = Conf()
     for k in conf._conf_sections:
         update_conf_from_file(conf, conf_file, section=k, prefix='{}_'.format(k))
-    for k in 'debug', 'dump_pulse_props', 'pjsua_log_level':
+    for k in 'debug', 'dump_pulse_props', 'pjsua_log_level', 'sentry_dsn':
         v = getattr(opts, k)
         if v is not None: setattr(conf, 'server_{}'.format(k), v)
 
     if opts.dump_conf:
         pprint_conf(conf, 'Current configuration options')
         return
+
+    if conf.server_sentry_dsn:
+        global raven_client
+        import raven
+        dsn = conf.server_sentry_dsn
+        raven_client = raven.Client(conf.server_sentry_dsn)
+        # XXX: can be hooked-up into logging and/or sys.excepthook
 
     if opts.systemd:
         from systemd import daemon
