@@ -21,6 +21,7 @@ class Conf(object):
     audio_klaxon = ''
     audio_klaxon_tmpdir = ''
     audio_klaxon_max_length = 10.0
+    audio_klaxon_padding = 0.0
     audio_pjsua_device = '^default$'
     audio_pjsua_conf_port = '' # there should be only one
     audio_pulse_mute = '^application\.name=paplay$'
@@ -514,6 +515,8 @@ class PagingServer(object):
             self.lib.destroy = self._pjsua_destroy
 
     def _pjsua_destroy(self):
+        # pjsua has serious issues with exiting cleanly - usually locks up and hangs after signal
+        # Hacks here make sure thing exits in a few seconds, one way or the other
         self.lib.destroy = lambda: None
         timeout = self.conf.server_pjsua_cleanup_timeout
         timeout_kill = min(timeout * 1.5, timeout + 3)
@@ -675,12 +678,12 @@ class PagingServer(object):
         with closing(wave.open(path, 'r')) as src:
             return src.getnframes() / float(src.getframerate())
 
-    def wav_play_sync(self, path, ts_diff_pad=1.0):
+    def wav_play_sync(self, path):
         ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
         if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
         with self.wav_play(path) as port:
             self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
-            self.poll(ts_diff + ts_diff_pad)
+            self.poll(ts_diff + self.conf.audio_klaxon_padding)
             self.log.debug('wav playback finished')
 
 
