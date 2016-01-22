@@ -7,7 +7,7 @@ from os.path import join, exists, isfile, expanduser, dirname
 from contextlib import contextmanager, closing
 from collections import deque
 import ConfigParser as configparser
-import os, sys, io, re, types, ctypes, subprocess
+import os, sys, io, re, types, ctypes, subprocess, threading
 import time, signal, logging, inspect, pkg_resources
 
 
@@ -525,15 +525,53 @@ class PagingServer(object):
         lib.start(with_thread=True)
         lib.c = self.pj._pjsua
 
-    def _pjsua_destroy(self):
-        # Default Lib.destroy() tends to hang forever
+        lib.version_has_quirks = False
         try: pjsua_ver = pkg_resources.get_distribution('pjsua').parsed_version
         except Exception as err:
             self.log.debug('Failed to get pjsua version number: %s', err)
             pjsua_ver = None
-        if not pjsua_ver or pjsua_ver > pkg_resources.parse_version('2.4.5'):
-            self.log.debug('Using pjsua native lib.destroy() method because of version check')
-            return self.lib.destroy()
+        lib.version_has_quirks = pjsua_ver and pjsua_ver <= pkg_resources.parse_version('2.4.5')
+        if lib.version_has_quirks:
+            self.log.debug('pjsua quirks-mode enabled due to version check (detected: %s)', pjsua_ver)
+            self.lib.destroy = self._pjsua_destroy
+
+            # There (still!) doesn't seem to be any callback for player EOF:
+            #  http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
+            # pjmedia also does not run callback randomly ~1-in-5 times anyway, no clue why
+            p = ctypes.CDLL('libpjsua.so.2')
+            def pj_status_check(res):
+                if res != 0: raise RuntimeError('pjsua call failed')
+                return ctypes.c_int(res)
+            def pj_cb_wrapper(func, port, userdata):
+                # self.log.debug('wav player eof callback called')
+                try: func()
+                except Exception as err:
+                    self.log.exception('pjmedia wav eof callback error: %s', err)
+                    return 1
+                else: return 0
+            pjsua_player_get_port = p.pjsua_player_get_port
+            pjsua_player_get_port.restype = pj_status_check
+            pjsua_player_get_port.argtypes = [
+                ctypes.c_int, ctypes.POINTER(ctypes.c_void_p) ]
+            c_player_eof_cb = ctypes.CFUNCTYPE(
+                ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p )
+            pjmedia_wav_player_set_eof_cb = p.pjmedia_wav_player_set_eof_cb
+            pjmedia_wav_player_set_eof_cb.restype = pj_status_check
+            pjmedia_wav_player_set_eof_cb.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, c_player_eof_cb ]
+            def player_set_eof_cb(player_id, func):
+                cb_func = ft.partial(pj_cb_wrapper, func)
+                port_p, cb = ctypes.c_void_p(),\
+                    c_player_eof_cb(cb_func)
+                pjsua_player_get_port(player_id, ctypes.byref(port_p))
+                pjmedia_wav_player_set_eof_cb(port_p, None, cb)
+                return port_p, cb, cb_func
+            lib.player_set_eof_cb = player_set_eof_cb
+
+
+
+
+    def _pjsua_destroy(self):
         self.lib.destroy = lambda: None
         timeout = self.conf.server_pjsua_cleanup_timeout
         timeout_kill = min(timeout * 1.5, timeout + 3)
@@ -631,13 +669,17 @@ class PagingServer(object):
 
     @contextmanager
     def wav_play(self, path, loop=False, connect_to_out=True):
-        # Currently there (still!) doesn't seem to be any callback for player EOF:
-        #  http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
+        if hasattr(self.lib, 'player_set_eof_cb'):
+            done = threading.Lock() # should only work with threads
+            done.acquire()
+        else: done = None
         player_id = self.lib.create_player(path, loop=loop)
         try:
-            player_port = self.lib.player_get_slot(player_id)
-            if connect_to_out: self.conf_port_connect(player_port)
-            yield player_port
+            if done:
+                stuff = self.lib.player_set_eof_cb(player_id, done.release)
+            port = self.lib.player_get_slot(player_id)
+            if connect_to_out: self.conf_port_connect(port)
+            yield port, done
         finally: self.lib.player_destroy(player_id)
 
     def wav_length(self, path, force_file=True):
@@ -651,12 +693,15 @@ class PagingServer(object):
             return src.getnframes() / float(src.getframerate())
 
     def wav_play_sync(self, path, ts_diff_pad=1.0):
-        # XXX: make it work via ctypes maybe
-        ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
-        if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
-        with self.wav_play(path) as player_port:
-            self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
-            time.sleep(ts_diff + ts_diff_pad)
+        player_has_eof_cb = hasattr(self.lib, 'player_set_eof_cb')
+        if not player_has_eof_cb:
+            ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
+            if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
+        with self.wav_play(path) as (port, done):
+            if not player_has_eof_cb:
+                self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
+                time.sleep(ts_diff + ts_diff_pad)
+            else: done.acquire()
 
 
 
