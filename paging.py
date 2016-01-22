@@ -371,20 +371,20 @@ class PSCallState(PSCallbacks):
 class PulseClient(object):
 
     def __init__(self, si_filter_regexp, si_filter_debug=False):
-        from pulsectl import ( Pulse,
+        from pulsectl import ( Pulse, PulseSinkInputInfo,
             PulseLoopStop, PulseIndexError, PulseError )
-        # Running that might start pa pid, so defer it until we actually
+        # Running client here might start pa pid, so defer it until we actually
         #  init audio output, and not started to just display some info and exit.
-        self._connect, self.pulse = Pulse, None
         self.si_filter_regexp, self.si_filter_debug = si_filter_regexp, si_filter_debug
+        self._connect, self._si_t, self.pulse = Pulse, PulseSinkInputInfo, None
         self.PulseIndexError, self.PulseError, self.PulseLoopStop =\
             PulseIndexError, PulseError, PulseLoopStop
         self.log = get_logger()
 
     def init(self):
         self.pulse = self._connect('paging')
-        # self.pulse.event_mask_set('sink_input')
-        # self.pulse.event_callback_set(self._handle_new_sink)
+        self.pulse.event_mask_set('sink_input')
+        self.pulse.event_callback_set(self._handle_new_sink)
         self.si_queue = deque()
         self.set_music_mute(False)
 
@@ -395,20 +395,24 @@ class PulseClient(object):
 
     def set_music_mute(self, state):
         self.music_muted = state
-        for si in self.pulse.sink_input_list():
-            self.si_queue.append(si.index)
-        self.poll() # XXX: wakeup here
+        self.si_queue.append(None) # "mute all signal"
+        self.pulse.event_listen_stop()
 
-    # def _handle_new_sink(self, ev):
-    # 	if ev.t != 'new' or ev.facility != 'sink_input': return
-    # 	self.si_queue.append(ev.index)
-    # 	raise self.PulseLoopStop
+    def _handle_new_sink(self, ev):
+        if ev.t != 'new' or ev.facility != 'sink_input': return
+        self.si_queue.append(ev.index)
+        raise self.PulseLoopStop
 
     def poll(self, timeout=None):
+        # Only safe to call pulse stuff here, before entering loop
         while self.si_queue:
             idx = self.si_queue.popleft()
+            if idx is None:
+                self.si_queue.extend(self.pulse.sink_input_list())
+                continue
             try:
-                si = self.pulse.sink_input_info(idx)
+                idx, si = (idx, self.pulse.sink_input_info(idx))\
+                    if not isinstance(idx, self._si_t) else (idx.index, idx)
                 for k, v in si.proplist.viewitems():
                     v = '{}={}'.format(k, v)
                     m = re.search(self.si_filter_regexp, v)
@@ -422,9 +426,7 @@ class PulseClient(object):
                     ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
                 self.pulse.mute(si, self.music_muted)
             except self.PulseIndexError: continue
-        # XXX: need to send wakeup event from another thread to stop poll here
-        # XXX: as otherwise other thread tries to access loop and fails
-        # self.pulse.event_listen(timeout)
+        self.pulse.event_listen(timeout)
 
 
 
@@ -555,7 +557,7 @@ class PagingServer(object):
             signal.alarm(max(2, int(ts_deadline - mono_time())))
             signal.signal( signal.SIGALRM, lambda sig,frm:\
                 self.log.debug('cleanup - pjsua lib destroy() has failed to finish') )
-            try: self.pj._pjsua.destroy()
+            try: self.lib.c.destroy()
             finally: signal.alarm(0)
             self.pj._lib = None
         finally:
@@ -604,8 +606,7 @@ class PagingServer(object):
                     self.sd_cycle(ts)
                     continue
             if not (self.running and self.lib): break
-            time.sleep(max_poll_delay) # XXX: pulse-poll
-            # self.pulse.poll(max_poll_delay)
+            self.pulse.poll(max_poll_delay)
             if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
         self.log.debug('pjsua event loop has been stopped')
 
@@ -650,6 +651,7 @@ class PagingServer(object):
             return src.getnframes() / float(src.getframerate())
 
     def wav_play_sync(self, path, ts_diff_pad=1.0):
+        # XXX: make it work via ctypes maybe
         ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
         if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
         with self.wav_play(path) as player_port:
@@ -854,6 +856,10 @@ def main(args=None, defaults=None):
         except (PSConfigurationError, PSAuthError) as err:
             print('ERROR [{}]: {}'.format(err.__class__.__name__, err), file=sys.stderr)
             return 1
+        except Exception as err:
+            # Logged here in case cleanup fails miserably and pid gets brutally murdered by kill -9
+            log.exception('Server runtime ERROR [%s], aborting: %s', err.__class__.__name__, err)
+            raise
         except KeyboardInterrupt: pass
     log.info('Finished')
 
