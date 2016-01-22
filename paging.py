@@ -8,8 +8,8 @@ from contextlib import contextmanager, closing
 from collections import deque, OrderedDict
 from heapq import heappush, heappop, heappushpop
 import ConfigParser as configparser
-import os, sys, io, re, types, ctypes, subprocess, threading
-import time, signal, logging, inspect, pkg_resources
+import os, sys, io, re, types, ctypes, threading
+import time, signal, logging, inspect
 
 
 class Conf(object):
@@ -173,7 +173,7 @@ def mono_time():
 
 def ffmpeg_towav(path=None, block=True, max_len=None, tmp_dir=None):
     if path and path.endswith('.wav'): return path
-    import hashlib, base64, tempfile, atexit
+    import subprocess, hashlib, base64, tempfile, atexit
 
     self = ffmpeg_towav
     if not hasattr(self, 'init'):
@@ -557,49 +557,6 @@ class PagingServer(object):
         lib.start(with_thread=True)
         lib.c = self.pj._pjsua
 
-        lib.version_has_quirks = False
-        try: pjsua_ver = pkg_resources.get_distribution('pjsua').parsed_version
-        except Exception as err:
-            self.log.debug('Failed to get pjsua version number: %s', err)
-            pjsua_ver = None
-        lib.version_has_quirks = pjsua_ver and pjsua_ver <= pkg_resources.parse_version('2.4.5')
-        if lib.version_has_quirks:
-            self.log.debug('pjsua quirks-mode enabled due to version check (detected: %s)', pjsua_ver)
-            self.lib.destroy = self._pjsua_destroy
-
-    def _pjsua_destroy(self):
-        # pjsua has serious issues with exiting cleanly - usually locks up and hangs after signal
-        # Hacks here make sure thing exits in a few seconds, one way or the other
-        self.lib.destroy = lambda: None
-        timeout = self.conf.server_pjsua_cleanup_timeout
-        timeout_kill = min(timeout * 1.5, timeout + 3)
-        kill_proc = subprocess.Popen( # in case everything else fails...
-            ['sh', '-c', 'sleep {} && kill -9 {}'.format(timeout_kill, os.getpid())],
-            preexec_fn=os.setsid )
-        try:
-            ts_deadline = mono_time() + timeout
-            signal.alarm(int(timeout + 2))
-            if self.lib._has_thread:
-                self.lib._has_thread = False
-                self.lib._quit = self.pj._lib._quit = 1
-                for n in xrange(400):
-                    if mono_time() > ts_deadline:
-                        self.log.debug('cleanup - pjsua thread has failed to exit')
-                        break
-                    if self.pj._lib._quit == 2 or self.lib._quit == 2: break
-                    self.lib.handle_events(1)
-                    time.sleep(0.05)
-            self.pj._lib._quit = 2
-            signal.alarm(max(2, int(ts_deadline - mono_time())))
-            signal.signal( signal.SIGALRM, lambda sig,frm:\
-                self.log.debug('cleanup - pjsua lib destroy() has failed to finish') )
-            try: self.lib.c.destroy()
-            finally: signal.alarm(0)
-            self.pj._lib = None
-        finally:
-            if kill_proc.poll() is None: kill_proc.terminate()
-            kill_proc.wait()
-
     @err_report_fatal
     def close(self):
         self.stop()
@@ -624,12 +581,15 @@ class PagingServer(object):
         'Anything poll-related MUST be done in this context.'
         if not self.pulse: return
         with self._poll_hold:
-            while True:
+            for n in xrange(int(5.0 / loop_interval)):
                 # wakeup only works when loop is actually started,
                 #  which might not be the case regardless of any locks.
                 self.pulse.poll_wakeup()
                 if self._poll_lock.acquire(False): break
                 time.sleep(loop_interval)
+            else:
+                raise PagingServerError('poll_wakeup() hangs, likely locking issue')
+            assert self.running
             try: yield
             finally: self._poll_lock.release()
 
@@ -653,6 +613,7 @@ class PagingServer(object):
             lock_release_safe()
             self._locks.discard(lock_release_safe)
 
+    @err_report_fatal
     def poll(self, timeout=None):
         if threading.current_thread().name != 'MainThread':
             assert timeout
@@ -679,9 +640,10 @@ class PagingServer(object):
                     else:
                         delay = min(delay, ts_cb - ts)
                         break
+                # self.log.debug('poll delay: %.1f', delay)
                 self.pulse.poll(max(0, delay))
                 if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
-                if ts > ts_deadline: break
+                if ts_deadline and ts > ts_deadline: break
             finally: self._poll_lock.release()
 
     @err_report_fatal
@@ -697,7 +659,7 @@ class PagingServer(object):
         acc.set_callback(PSAccountState(self))
 
         self.log.debug('pjsua event loop started')
-        while True: self.poll()
+        self.poll()
         self.log.debug('pjsua event loop has been stopped')
 
     def stop(self):
