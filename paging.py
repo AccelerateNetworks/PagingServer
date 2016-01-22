@@ -6,6 +6,7 @@ import itertools as it, operator as op, functools as ft
 from os.path import join, exists, isfile, expanduser, dirname
 from contextlib import contextmanager, closing
 from collections import deque
+from heapq import heappush, heappop, heappushpop
 import ConfigParser as configparser
 import os, sys, io, re, types, ctypes, subprocess, threading
 import time, signal, logging, inspect, pkg_resources
@@ -396,12 +397,16 @@ class PulseClient(object):
     def set_music_mute(self, state):
         self.music_muted = state
         self.si_queue.append(None) # "mute all signal"
-        self.pulse.event_listen_stop()
+        self.poll_wakeup()
 
     def _handle_new_sink(self, ev):
         if ev.t != 'new' or ev.facility != 'sink_input': return
         self.si_queue.append(ev.index)
         raise self.PulseLoopStop
+
+    def poll_wakeup(self):
+        if not self.pulse: return
+        self.pulse.event_listen_stop()
 
     def poll(self, timeout=None):
         # Only safe to call pulse stuff here, before entering loop
@@ -446,6 +451,7 @@ class PagingServer(object):
         self.pj = pjsua
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
+        self.running, self._poll_callbacks, self._locks = None, list(), set()
 
 
     def match_info(self, infos, spec, kind):
@@ -535,42 +541,6 @@ class PagingServer(object):
             self.log.debug('pjsua quirks-mode enabled due to version check (detected: %s)', pjsua_ver)
             self.lib.destroy = self._pjsua_destroy
 
-            # There (still!) doesn't seem to be any callback for player EOF:
-            #  http://lists.pjsip.org/pipermail/pjsip_lists.pjsip.org/2010-June/011112.html
-            # pjmedia also does not run callback randomly ~1-in-5 times anyway, no clue why
-            p = ctypes.CDLL('libpjsua.so.2')
-            def pj_status_check(res):
-                if res != 0: raise RuntimeError('pjsua call failed')
-                return ctypes.c_int(res)
-            def pj_cb_wrapper(func, port, userdata):
-                # self.log.debug('wav player eof callback called')
-                try: func()
-                except Exception as err:
-                    self.log.exception('pjmedia wav eof callback error: %s', err)
-                    return 1
-                else: return 0
-            pjsua_player_get_port = p.pjsua_player_get_port
-            pjsua_player_get_port.restype = pj_status_check
-            pjsua_player_get_port.argtypes = [
-                ctypes.c_int, ctypes.POINTER(ctypes.c_void_p) ]
-            c_player_eof_cb = ctypes.CFUNCTYPE(
-                ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p )
-            pjmedia_wav_player_set_eof_cb = p.pjmedia_wav_player_set_eof_cb
-            pjmedia_wav_player_set_eof_cb.restype = pj_status_check
-            pjmedia_wav_player_set_eof_cb.argtypes = [
-                ctypes.c_void_p, ctypes.c_void_p, c_player_eof_cb ]
-            def player_set_eof_cb(player_id, func):
-                cb_func = ft.partial(pj_cb_wrapper, func)
-                port_p, cb = ctypes.c_void_p(),\
-                    c_player_eof_cb(cb_func)
-                pjsua_player_get_port(player_id, ctypes.byref(port_p))
-                pjmedia_wav_player_set_eof_cb(port_p, None, cb)
-                return port_p, cb, cb_func
-            lib.player_set_eof_cb = player_set_eof_cb
-
-
-
-
     def _pjsua_destroy(self):
         self.lib.destroy = lambda: None
         timeout = self.conf.server_pjsua_cleanup_timeout
@@ -604,10 +574,10 @@ class PagingServer(object):
 
     @err_report_fatal
     def close(self):
-        self.log.debug('server cleanup started...')
+        self.stop()
         if self.lib:
             self.log.debug('pjsua cleanup')
-            self._pjsua_destroy()
+            self.lib.destroy()
             self.lib = None
         if self.pulse:
             self.log.debug('pulse cleanup')
@@ -621,6 +591,61 @@ class PagingServer(object):
     def __del__(self): self.close()
 
 
+    def poll_lock(self, delay):
+        lock = threading.Lock()
+        def lock_release_safe():
+            self.log.debug('Lock release: %s', lock)
+            try: lock.release()
+            except: pass
+        self._locks.add(lock_release_safe)
+        try:
+            lock.acquire()
+            self.poll_callback(lock_release_safe, delay)
+            self.poll_wakeup()
+            lock.acquire()
+        finally:
+            lock_release_safe()
+            self._locks.remove(lock_release_safe)
+
+    def poll_callback(self, func, delay=None, ts=None):
+        if ts is None: ts = mono_time()
+        ts += delay or 0
+        heappush(self._poll_callbacks, (ts, func))
+
+    def poll_wakeup(self):
+        if not self.pulse: return
+        self.pulse.poll_wakeup()
+
+    def poll(self, timeout=None):
+        if threading.current_thread().name != 'MainThread':
+            assert timeout
+            return self.poll_lock(timeout).acquire()
+        ts = mono_time()
+        self.running, ts_deadline = True, timeout and mono_time() + timeout
+        while True:
+            if not self.sd_cycle or not self.sd_cycle.ts_next: delay = 600
+            else:
+                delay = self.sd_cycle.ts_next - ts
+                if delay <= 0:
+                    self.sd_cycle(ts)
+                    continue
+            if not (self.running and self.lib): break
+            if ts_deadline: delay = min(delay, ts_deadline - ts)
+            if self._poll_callbacks:
+                while True:
+                    ts_cb, cb = self.poll_callbacks[0]
+                    if ts_cb >= ts:
+                        heappop(self.poll_callbacks)
+                        cb()
+                    else:
+                        delay = min(delay, ts_cb - ts)
+                        break
+            # self.log.debug('poll delay: %.1f', delay)
+            self.pulse.poll(max(0, delay))
+            if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
+            ts = mono_time()
+            if ts > ts_deadline: break
+
     @err_report_fatal
     def run(self):
         assert self.lib, 'Must be initialized before run()'
@@ -633,22 +658,16 @@ class PagingServer(object):
         acc = self.lib.create_account(self.pj.AccountConfig(domain, user, pw))
         acc.set_callback(PSAccountState(self))
 
-        self.running = True
         self.log.debug('pjsua event loop started')
-        while True:
-            if not self.sd_cycle or not self.sd_cycle.ts_next: max_poll_delay = 600
-            else:
-                ts = mono_time()
-                max_poll_delay = self.sd_cycle.ts_next - ts
-                if max_poll_delay <= 0:
-                    self.sd_cycle(ts)
-                    continue
-            if not (self.running and self.lib): break
-            self.pulse.poll(max_poll_delay)
-            if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
+        while True: self.poll()
         self.log.debug('pjsua event loop has been stopped')
 
-    def stop(self): self.running = False
+    def stop(self):
+        self.running = False
+        if self._locks:
+            for release_func in self._locks: release_func()
+            self._locks = None
+        self.poll_wakeup()
 
 
     def get_pj_conf_ports(self):
@@ -669,23 +688,17 @@ class PagingServer(object):
 
     @contextmanager
     def wav_play(self, path, loop=False, connect_to_out=True):
-        if hasattr(self.lib, 'player_set_eof_cb'):
-            done = threading.Lock() # should only work with threads
-            done.acquire()
-        else: done = None
         player_id = self.lib.create_player(path, loop=loop)
         try:
-            if done:
-                stuff = self.lib.player_set_eof_cb(player_id, done.release)
             port = self.lib.player_get_slot(player_id)
             if connect_to_out: self.conf_port_connect(port)
-            yield port, done
+            yield port
         finally: self.lib.player_destroy(player_id)
 
     def wav_length(self, path, force_file=True):
         # Only useful to stop playback in a hacky ad-hoc way,
         #  because pjsua python lib doesn't export proper callback,
-        #  and ctypes wrapper would be even uglier
+        #  and ctypes wrapper doesn't seem to work reliably either (see 7f1df5d)
         import wave
         if force_file and not isfile(path): # missing, fifo, etc
             raise PagingServerError(path)
@@ -693,15 +706,12 @@ class PagingServer(object):
             return src.getnframes() / float(src.getframerate())
 
     def wav_play_sync(self, path, ts_diff_pad=1.0):
-        player_has_eof_cb = hasattr(self.lib, 'player_set_eof_cb')
-        if not player_has_eof_cb:
-            ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
-            if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
-        with self.wav_play(path) as (port, done):
-            if not player_has_eof_cb:
-                self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
-                time.sleep(ts_diff + ts_diff_pad)
-            else: done.acquire()
+        ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
+        if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
+        with self.wav_play(path) as port:
+            self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
+            self.poll(ts_diff + ts_diff_pad)
+            self.log.debug('wav playback finished')
 
 
 
