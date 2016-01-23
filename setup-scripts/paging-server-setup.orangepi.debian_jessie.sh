@@ -89,6 +89,7 @@ systemctl daemon-reload
 systemctl enable dhcpcd
 systemctl disable resolvconf
 
+rm -f /etc/resolv.conf
 echo 'nameserver 8.8.8.8' >/etc/resolv.conf
 echo 'nameserver 8.8.4.4' >>/etc/resolv.conf
 
@@ -115,24 +116,25 @@ amixer sset 'Lineout volume control' 31
 amixer sset 'Audio lineout' on
 alsactl store
 
-cat >/etc/asound.conf <<EOF
-pcm.!default {
-  # See http://www.alsa-project.org/alsa-doc/alsa-lib/pcm_plugins.html#pcm_plugins_softvol
-  type softvol
-  slave.pcm "sysdefault:CARD=audiocodec"
-  control.name "Soft-amp PCM"
-  hint.description "Sound thru alsa-softvol amp thing"
-  max_dB 32.0 # default is 0
-  # min_dB -51.0 # default is -51.0
-}
-EOF
+## PulseAudio should be doing all softvol stuff here
+# cat >/etc/asound.conf <<EOF
+# pcm.!default {
+#   # See http://www.alsa-project.org/alsa-doc/alsa-lib/pcm_plugins.html#pcm_plugins_softvol
+#   type softvol
+#   slave.pcm "sysdefault:CARD=audiocodec"
+#   control.name "Soft-amp PCM"
+#   hint.description "Sound thru alsa-softvol amp thing"
+#   max_dB 32.0 # default is 0
+#   # min_dB -51.0 # default is -51.0
+# }
+# EOF
 
 
 echo
-echo '-----===== Step: enabling watchdog actions (reboot-on-fail) for PagingServer systemd units'
+echo '-----===== Step: enable watchdog actions (reboot-on-fail) for PagingServer-related systemd units'
 echo
 
-for s in jack@ paging-jack-out@ paging-jack-out-all paging ; do
+for s in paging ; do
 	mkdir -p /etc/systemd/system/"$s".service.d
 	s=/etc/systemd/system/"$s".service.d/paging-reboot-on-fail.conf
 	echo '[Service]' >"$s"
@@ -145,11 +147,7 @@ echo
 echo '-----===== Step: starting/enabling PagingServer-related stuff'
 echo
 
-systemctl start jack@paging
-systemctl stop paging-jack-out@hw:0 ||:
-systemctl disable paging-jack-out@hw:0 ||:
-systemctl start paging-jack-out@default
-systemctl enable paging-jack-out@default
+# XXX: mpd, pulse, etc setup here
 
 if awk 'p&&/^\[/ {p=0} /^\[sip\]$/ {p=1} p&&/^ *(domain|user|pass) *= *<(sip server|username|password)>$/ {exit 1}' /etc/paging.conf
 then

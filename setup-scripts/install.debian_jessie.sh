@@ -87,13 +87,13 @@ chk_install() {
 mkdir -p "$pkg_cache"
 
 
-apt_install --no-install-recommends jackd1 alsa-utils
+apt_install --no-install-recommends pulseaudio pulseaudio-utils alsa-utils
 
-jackd --version | grep '^jackd version 0\.'\
-	|| die "Failed to match valid jackd1 version from 'jackd --version'"
+pulseaudio --version | grep '^pulseaudio '\
+	|| die "Failed to match valid pulseaudio version from 'pulseaudio --version'"
 
 
-apt_install curl build-essential checkinstall libjack0 libjack-dev python python-dev python-setuptools
+apt_install curl build-essential checkinstall python python-dev python-setuptools
 
 cc --version
 make --version
@@ -114,21 +114,12 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 
 	pushd "${pj_dir}"
 
-	./configure --prefix=/usr --enable-shared --disable-v4l2 --disable-video
-	sed -i 's/\(AC_PA_USE_.*\)=1/\1=0/' third_party/build/portaudio/os-auto.mak
-	echo 'AC_PA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
-	echo 'export CFLAGS += -DPA_USE_JACK=1' >>third_party/build/portaudio/os-auto.mak
-	echo 'PORTAUDIO_OBJS += pa_jack.o pa_ringbuffer.o' >>third_party/build/portaudio/os-auto.mak
-	echo '#include "../../../portaudio/src/hostapi/jack/pa_jack.c"' > third_party/build/portaudio/src/pa_jack.c
-	echo '#include "../../../portaudio/include/pa_jack.h"' > third_party/build/portaudio/src/pa_jack.h
-	sed -i 's/-lportaudio/-ljack \0/' build.mak
+	./configure --prefix=/usr --disable-v4l2 --disable-video
 	make dep
 	make
 	sed -i 's/^\(\s\+\)cp -af /\1cp -r /' Makefile
 
-	chk_install -y\
-		--pkgname=pjproject --pkgversion="${pj_ver}"\
-		--requires 'libjack0'
+	chk_install -y --pkgname=pjproject --pkgversion="${pj_ver}"
 
 	dpkg_check pjproject
 	cp *.deb "$pkg_cache"/
@@ -155,25 +146,27 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 }
 
 
-apt_install python-cffi libsystemd0 libsystemd-daemon0 libsystemd-journal0 libsystemd-id128-0
+apt_install libpulse0 libsystemd0 libsystemd-daemon0 libsystemd-journal0 libsystemd-id128-0
 
 dpkg_check python-jack || {
-	curl -L https://github.com/spatialaudio/jackclient-python/archive/master.tar.gz | tar xz
-	pushd jackclient-python-master
+	apt_install python python-dev python-setuptools
+
+	curl -L https://github.com/mk-fg/python-pulse-control/archive/master.tar.gz | tar xz
+	pushd python-pulse-control-master
 
 	chk_install -y\
-		--pkgname=python-jack\
-		--pkgversion=$(grep '^__version__' jack.py | grep -o '[0-9.]\+')\
-		--requires 'libjack0,python-cffi'\
+		--pkgname=python-pulsectl\
+		--pkgversion=$(grep 'version' setup.py | grep -o '[0-9.]\+')\
+		--requires 'python,libpulse0'\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
 
-	dpkg_check python-jack
+	dpkg_check python-pulsectl
 	cp *.deb "$pkg_cache"/
 
 	popd
 }
-python2 -c 'import jack'
+python2 -c 'import pulsectl'
 
 dpkg_check python-systemd || {
 	apt_install libsystemd-dev libsystemd-journal-dev
@@ -202,18 +195,15 @@ dpkg_check paging-server || {
 
 	cat >extras.list <<EOF
 usr/lib/systemd/system/paging.service
-usr/lib/systemd/system/jack@.service
-usr/lib/systemd/system/paging-jack-out-all.service
-usr/lib/systemd/system/paging-jack-out@.service
 usr/share/doc/paging-server/paging.example.conf
 EOF
-	install -D -m0644 -t usr/lib/systemd/system/ *.service
+	install -D -m0644 -t usr/lib/systemd/system/ setup-configs/paging.service
 	install -D -m0644 -t usr/share/doc/paging-server/ paging.example.conf
 
 	chk_install -y\
 		--pkgname=paging-server\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--requires 'pjproject,python,python-pkg-resources,python-pjsua,python-jack'\
+		--requires 'pjproject,python,python-pkg-resources,python-pjsua,python-pulsectl'\
 		--include extras.list\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
@@ -231,7 +221,7 @@ id paging || useradd -r -d /var/empty -s /bin/false -G audio paging
 [[ -e /etc/paging.conf ]]\
 	|| install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
-for s in paging jack@paging paging-jack-out-all paging-jack-out@test
+for s in paging
 do [[ -n "$(systemctl cat "$s")" ]] || die "Failed to load $s.service"
 done
 
@@ -244,13 +234,17 @@ echo
 echo "Edit configuration file in: /etc/paging.conf"
 echo "At least domain/user/pass MUST be specified there in the [sip] section."
 echo
-echo "After that, start the service with: systemctl start paging-jack-out-all paging"
-echo "  check status: systemctl status jack@paging paging"
+echo "Then configure pulseaudio and/or music player instances to start."
+echo
+echo "After that, start the service with: systemctl start paging"
+echo "  check status: systemctl status paging"
 echo "  check service log with: journalctl -ab -u paging"
 echo "  continuously 'tail' log with: journalctl -af -u paging"
 echo "  continuously tail all system logs with: journalctl -af"
 echo
 echo "If service has been started and is running successfully,"
-echo " enable it to run on boot with: systemctl enable paging-jack-out-all paging"
+echo " enable it to run on boot with: systemctl enable paging"
 echo
 echo --------------------
+
+exit 0

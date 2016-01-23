@@ -422,7 +422,6 @@ class PulseClient(object):
         self.music_muted = state
         self.si_queue.append(None) # "mute all signal"
 
-    @err_report
     def _handle_new_sink(self, ev):
         if ev.t != 'new' or ev.facility != 'sink_input': return
         self.si_queue.append(ev.index)
