@@ -24,7 +24,7 @@ class Conf(object):
     audio_klaxon_padding = 0.0
     audio_pjsua_device = '^default$'
     audio_pjsua_conf_port = '' # there should be only one
-    audio_pulse_mute = '^application\.name=paplay$'
+    audio_pulse_mute = '^application\.process\.binary=mpd$'
 
     calls_hold_concurrent = False
     calls_hang_up_after_minutes = 5.0

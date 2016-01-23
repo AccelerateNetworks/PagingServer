@@ -1,0 +1,5 @@
+[Service]
+User=paging
+Type=notify
+ExecStart=/usr/bin/pulseaudio --daemonize=no --disallow-exit --exit-idle-time=999999 -nF /etc/pulse/paging.pa
+Restart=on-failure

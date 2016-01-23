@@ -1,0 +1,27 @@
+[Unit]
+Requires=pulse.service
+After=network.target network-online.target sound.target pulse.service
+Wants=network-online.target
+
+[Service]
+User=paging
+LimitRTPRIO=50
+LimitRTTIME=infinity
+PermissionsStartOnly=yes
+ExecStartPre=/bin/mkdir -p -m770 /run/mpd-paging
+ExecStartPre=/bin/chown root:paging /run/mpd-paging
+ExecStart=/usr/bin/env mpd --no-daemon /etc/mpd.%I.conf
+ExecStartPost=/bin/bash -c '\
+	set -e -o pipefail;\
+	[[ ! -e /etc/mpd.%I.url ]] || {\
+		curl -s /etc/mpd.%I.url >/etc/mpd.%I.m3u\
+			|| wget -q -O- /etc/mpd.%I.url >/etc/mpd.%I.m3u; };\
+	[[ ! -e /etc/mpd.%I.m3u ]] || {\
+		sleep 2; mpc="mpc --wait -h /run/mpd-paging/%I";\
+		$mpc clear;\
+		$mpc repeat on;\
+		xargs -n1 $mpc insert </etc/mpd.%I.m3u;\
+		$mpc play; }'
+
+[Install]
+WantedBy=multi-user.target

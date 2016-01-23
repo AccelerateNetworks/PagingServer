@@ -1,0 +1,38 @@
+#!/usr/bin/pulseaudio -nF
+
+load-module module-device-restore
+load-module module-stream-restore
+load-module module-card-restore
+
+load-module module-augment-properties
+
+load-module module-alsa-sink device=sysdefault sink_name=alsa-speakers
+# load-module module-alsa-source device=sysdefault source_name=alsa-mic
+
+.ifexists module-systemd-login.so
+load-module module-systemd-login
+.endif
+
+load-module module-default-device-restore
+load-module module-rescue-streams
+load-module module-always-sink
+load-module module-intended-roles
+# load-module module-suspend-on-idle
+load-module module-position-event-sounds
+# load-module module-role-cork
+load-module module-filter-heuristics
+load-module module-filter-apply
+load-module module-switch-on-port-available
+
+load-module module-native-protocol-unix
+
+# set-default-sink alsa-speakers
+# set-default-source alsa-mic
+
+### Sound forwarding
+# load-module module-rtp-send source=alsa-speakers.monitor destination=10.0.1.1 port=9875
+# load-module module-simple-protocol-tcp sink=alsa-speakers.monitor port=9875 rate=44100 format=s16le channels=2 playback=false record=true
+
+### Channels-to-sinks remapping
+# load-module module-remap-sink sink_name=alsa-left master=alsa-speakers channels=1 master_channel_map=front-left
+# load-module module-remap-sink sink_name=alsa-right master=alsa-speakers channels=1 master_channel_map=front-right

@@ -1,7 +1,7 @@
 [Unit]
-After=network.target network-online.target jack@paging.service
+Requires=pulse.service
+After=network.target network-online.target sound.target pulse.service
 Wants=network-online.target
-Requires=jack@paging.service
 
 [Service]
 Type=notify
@@ -14,8 +14,8 @@ StartLimitBurst=10
 # StartLimitAction=reboot
 
 User=paging
-LimitRTPRIO=95
-LimitMEMLOCK=999999999
+LimitRTPRIO=50
+LimitRTTIME=infinity
 ExecStart=/usr/bin/paging --systemd
 
 [Install]
