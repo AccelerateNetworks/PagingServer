@@ -473,7 +473,7 @@ class PagingServer(object):
     @err_report
     def __init__(self, conf, sd_cycle=None):
         import pjsua
-        self.pj = pjsua
+        self.pj, self.pulse = pjsua, None
         self.conf, self.sd_cycle = conf, sd_cycle
         self.log = get_logger()
         self.running, self._poll_callbacks, self._locks = None, list(), set()
