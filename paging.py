@@ -800,17 +800,6 @@ def main(args=None, defaults=None):
 
     opts = parser.parse_args(args)
 
-    global log
-    log = '%(name)s %(levelname)s :: %(message)s'
-    if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
-    logging.basicConfig(
-        format=log, datefmt='%Y-%m-%d %H:%M:%S',
-        level=logging.DEBUG if opts.debug else logging.WARNING )
-    log = logging.getLogger('main')
-    if opts.debug:
-        for k in 'stdout', 'stderr':
-            setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
-
     if opts.dump_conf_defaults:
         pprint_conf(defaults, 'Default configuration options')
         return
@@ -827,11 +816,22 @@ def main(args=None, defaults=None):
         update_conf_from_file(conf, conf_file, section=k, prefix='{}_'.format(k))
     for k in 'debug', 'dump_pulse_props', 'pjsua_log_level', 'sentry_dsn':
         v = getattr(opts, k)
-        if v is not None: setattr(conf, 'server_{}'.format(k), v)
+        if v not in [None, False]: setattr(conf, 'server_{}'.format(k), v)
 
     if opts.dump_conf:
         pprint_conf(conf, 'Current configuration options')
         return
+
+    global log
+    log = '%(name)s %(levelname)s :: %(message)s'
+    if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
+    logging.basicConfig(
+        format=log, datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.DEBUG if conf.server_debug else logging.WARNING )
+    log = logging.getLogger('main')
+    if conf.server_debug:
+        for k in 'stdout', 'stderr':
+            setattr(sys, k, os.fdopen(getattr(sys, k).fileno(), 'wb', 0))
 
     if conf.server_sentry_dsn:
         global raven_client
