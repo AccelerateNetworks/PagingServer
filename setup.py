@@ -11,14 +11,14 @@ except IOError: readme = ''
 setup(
 
     name = 'PagingServer',
-    version = '16.1.24',
+    version = '16.1.25',
     author = 'Dan Ryan, Mike Kazantsev',
     author_email = 'dan@seattlemesh.net, mk.fraggod@gmail.com',
     license = 'GPL-2',
     keywords = [
         'sip', 'telephony', 'phone', 'paging', 'announcement',
         'autoanswer', 'callpipe', 'klaxon',
-        'pj', 'pjproject', 'pjsip', 'pjsua', 'jack' ],
+        'pj', 'pjproject', 'pjsip', 'pjsua', 'pulse', 'pulseaudio', 'pa' ],
     url = 'https://github.com/AccelerateNetworks/PagingServer',
 
     description = 'SIP-based Announcement / PA / Paging / Public Address Server system',
@@ -43,7 +43,7 @@ setup(
         'Topic :: Multimedia :: Sound/Audio :: Mixers',
         'Topic :: Multimedia :: Sound/Audio :: Speech' ],
 
-    install_requires = ['JACK-Client'],
+    install_requires = ['setuptools', 'pulsectl'],
     extras_require = {'sentry': ['raven']},
 
     py_modules=['paging'],

@@ -30,7 +30,7 @@ set -e -o pipefail
 
 pkg_cache=/var/tmp/PagingServer.debs
 pkg_list="$pkg_cache"/apt-get-installed.list
-pkg_release=3
+pkg_release=4
 
 tmp_dir=$(mktemp -d "${HOME}"/PagingServer.install.XXXXXX)
 [[ -n "$NOCLEANUP" ]] || trap "rm -rf '$tmp_dir'" EXIT
@@ -114,7 +114,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 
 	pushd "${pj_dir}"
 
-	./configure --prefix=/usr --disable-v4l2 --disable-video
+	./configure --prefix=/usr --disable-v4l2 --disable-video --enable-shared
 	make dep
 	make
 	sed -i 's/^\(\s\+\)cp -af /\1cp -r /' Makefile
@@ -148,7 +148,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 
 apt_install libpulse0 libsystemd0 libsystemd-daemon0 libsystemd-journal0 libsystemd-id128-0
 
-dpkg_check python-jack || {
+dpkg_check python-pulsectl || {
 	apt_install python python-dev python-setuptools
 
 	curl -L https://github.com/mk-fg/python-pulse-control/archive/master.tar.gz | tar xz
@@ -166,7 +166,7 @@ dpkg_check python-jack || {
 
 	popd
 }
-python2 -c 'import pulsectl'
+python2 -c 'from pulsectl import Pulse'
 
 dpkg_check python-systemd || {
 	apt_install libsystemd-dev libsystemd-journal-dev
