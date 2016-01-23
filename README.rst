@@ -4,13 +4,16 @@ PagingServer
 SIP-based Announcement / PA / Paging / Public Address Server system.
 
 Main component of this project is a script to run PJSUA_ SIP client connected to
-a JACK_ sound server routing audio to whatever sound cards and speaker sets.
+a PulseAudio_ sound server routing audio to whatever sound cards and speaker
+sets.
 
 It picks up calls, plays klaxon on speakers, followed by the announcement made
 in that call. Music plays in-between announcements.
 
-Script controls PJSUA and JACK to make them work to that effect.
+Script controls PJSUA and PulseAudio (muting/unmuting streams there) to make
+them work to that effect.
 
+|
 
 .. contents::
   :backlinks: none
@@ -38,8 +41,8 @@ See output of ``paging --help`` for info on how to specify additional
 configuration, more up-to-date list of default paths, as well as general
 information for all the other options available.
 
-Provided `paging.example.conf`_ file has all the available
-configuration options and their descriptions.
+Provided `paging.example.conf`_ file has all the available configuration options
+and their descriptions.
 
 To see default configuration options, use ``paging --dump-conf-defaults``, and
 run ``paging --dump-conf ...`` to see the actual options being picked-up and
@@ -56,11 +59,11 @@ Both are described in more detail below.
 Start/run in the foreground
 ```````````````````````````
 
-Aka simple non-forking start.
+First - make sure PulseAudio_ and its ALSA_ backend are configured (and unmuted,
+in case of ALSA) as they should be and pulse server can run/runs for same user
+that this script will be running as.
 
-If necessary, start jackd process in the background first::
-
-  % jackd -d dummy &>/dev/null &
+How to do that is out of scope for this README.
 
 Then just run the thing as::
 
@@ -104,35 +107,20 @@ installed to ``/etc/systemd/system``, and assumes following things:
 
 * Optional python-systemd_ module dependency is installed.
 
-There's also related ``paging-jack-out-all.service`` unit file for starting
-jackd1 and its audio outputs (see "JACK output configuration" section below for
-more info).
-
 With all these correct, service can then be used like this:
 
 * Start/stop/restart service::
 
-    % systemctl start paging-jack-out-all
     % systemctl start paging
     % systemctl stop paging
     % systemctl restart paging
 
-  Same can be done with related ``paging-jack-out-all`` service (just replace
-  "paging" with that name), which should be started/enabled along with
-  ``paging`` service.
-
 * Enable service(s) to start on OS boot::
 
-    systemctl enable paging-jack-out-all paging
-
-  See "JACK output configuration" section below for more info on
-  "paging-jack-out-all" service and what it can be replaced with in a
-  non-trivial audio setup.
+    systemctl enable paging
 
 * See if service is running, show last log entries: ``systemctl status paging``
 * Show all logs for service since last OS boot: ``journalctl -ab -u paging``
-
-* Show logs for related jackd service: ``journalctl -ab -u jack@paging``
 
 * Continously show ("tail") all logs in the system: ``journalctl -af``
 
@@ -176,8 +164,7 @@ PagingServer`` (this will try to install stuff to /usr!!!).
 
 Unless you know python packaging though, please look at `pip2014.com`_, `python
 packaging tutorial`_, documentation below for easy installation (from
-packages/repo) on specific systems, or a more detailed step-by-step instructions
-for both python package and other requirements in "README.install.rst" file.
+packages/repo) on specific systems.
 
 
 Requirements
@@ -196,13 +183,9 @@ Requirements
   python bindings manually from the same sources, and NOT e.g. install pjsua
   from package and then build bindings separately.
 
-* JACK_ - both JACK1 (C) and JACK2 (C++) forks should work.
+* PulseAudio_
 
-  Only tested with JACK1 fork, but as both have same ABI and only interacted
-  with via libjack, there should be no difference wrt which one is actually
-  running.
-
-* `JACK-Client python module`_
+* `pulsectl python module`_
 
 * (optional) ffmpeg_ binary - if audio samples are not wav files (will be
   converted on every startup, if needed).
@@ -226,7 +209,7 @@ Debian Jessie
 
   Running this one-liner should be the easiest way by far::
 
-    wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.from_debs.sh | bash
+    wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/setup-scripts/install.debian_jessie.from_debs.sh | bash
 
   Or, if ``wget ... | bash`` sounds too scary, same exact steps as in that
   script are::
@@ -235,18 +218,23 @@ Debian Jessie
     # echo 'deb http://paging-server.ddns.net/ jessie main' >/etc/apt/sources.list.d/paging-server.list
     # apt-get update
 
-    # apt-get install --no-install-recommends jackd1 alsa-utils
+    # apt-get install --no-install-recommends pulseaudio pulseaudio-utils alsa-utils
     # apt-get install paging-server python-systemd
 
     # useradd -r -d /var/empty -s /bin/false -G audio paging
     # install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
-  Then edit config in ``/etc/paging.conf`` and start and/or enable jackd, its
-  bridge to ALSA hardware and server::
+  Configure, set-levels and unmute alsa/pulse, if necessary (depends heavily on
+  the specific setup)::
+
+    # alsamixer
+    # nano /etc/pulse/default.pa
+
+  Then edit config in ``/etc/paging.conf`` and start/enable the daemon::
 
     # nano /etc/paging.conf
-    # systemctl start paging-jack-out-all paging
-    # systemctl enable paging-jack-out-all paging
+    # systemctl start paging
+    # systemctl enable paging
 
   See "Usage" section for more details on how to run the thing.
 
@@ -259,7 +247,7 @@ Debian Jessie
   necessary by running `install.debian_jessie.sh`_ script from the repository as
   a root user (as it runs apt-get and such)::
 
-    # wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.sh
+    # wget https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/setup-scripts/install.debian_jessie.sh
     # bash install.debian_jessie.sh -x
 
   (running without -x flag will issue a warning message and exit)
@@ -280,14 +268,14 @@ Debian Jessie
 
 * Manual installation.
 
-  See detailed description in the `README.install.rst`_ file.
+  Follow roughly same steps as what `install.debian_jessie.sh`_ script does.
+
 
 
 Other systems
 `````````````
 
-Follow the steps described in `README.install.rst`_ file, adjusting them for
-your system/distribution where necessary.
+Just build/install all the requirements above from OS packages or however.
 
 
 
@@ -305,123 +293,34 @@ Overview of the software stack related to audio flow:
   * ALSA_ libs (and straight down to linux kernel)
   * OSS (/dev/dsp*, only supported through emulation layer in modern kernels)
   * JACK sound server
-  * PulseAudio sound server
-    (with a `somewhat unstable patch`_, see `comment on #3`_ for details)
+  * PulseAudio_ sound server (through ALSA compatibility layer)
 
-  In this particular implementation, JACK backend is used, as it is necessary to
-  later multiplex PJSUA output to multiple destinations and mix-in sounds from
-  other sources there.
+  In this particular implementation, PulseAudio backend is assumed.
 
-  So PortAudio sends sound stream to JACK.
+* PulseAudio serves as a "hub", receiving streams from music players (mpd_
+  instances), klaxon sounds, calls picked-up by PJSUA.
 
-* JACK serves as a "hub", receiving streams from music players (mpd_ instances),
-  klaxon sounds, calls picked-up by PJSUA.
+  Depending on PulseAudio and music players' configuration, these outputs can be
+  then mixed together and mapped to audio cards (or specific channels of these)
+  as necessary.
 
-  JACK mixes these streams together, muting and connecting/disconnecting some as
-  necessary, controlled by the server script ("paging").
+* PulseAudio outputs sound through ALSA libs and that goes to kernel driver and
+  hardware, eventually.
 
-  End result is N stream(s) corresponding to (N) configured hardware output(s).
+  Here make sure that ALSA is also configured properly - sound hardware unmuted,
+  volume level is set correctly and any other necessary mixer controls are set.
 
-* JACK outputs resulting sound stream(s) through ALSA libs (and linux from
-  there) to the sound hardware.
+  This all is usually easy to do with "alsamixer" tool.
 
 Whole stack can always be tested with command like this::
 
   % paging --test-audio-file my-sound.wav
 
-That option makes script just play the specified file with pjsua and exit.
+That option makes script just play the specified file through pjsua (as it would
+output the sound of the incoming call or a klaxon sound) and exit.
+
 If that works correctly, all that sound output pipeline from pjsua to alsa
 should be fine.
-
-
-ASCII diagram
-`````````````
-
-::
-
-  +--------------+   +-----------+   +-----------------+ +------------+
-  |              |   |           |   |                 | |            |
-  | SIP network  ----->          ---->  PortAudio lib  | | mpd player |
-  |              |   |   PJSUA   |   |                 | |            |
-  +--------------+   |           |   +-----|-----------+ +-|----------+
-                     |           |         |               |
-  +- - - - - - - +   |           |   +-----v-----------+   |
-                 |   |           |   |                 <---+
-  | Klaxon files - - - >         |   |     |           |
-                 |   |      ^    |   |     +---------> ------+
-  + - - - - - - -+   +------|----+   |     |           |     |
-                                     |     +---------> ----+ |
-  + - - - - - - - - - - - - | - - -+ |     |           |   | |
-  |                                  |     +---------> --+ | |
-    --test-audio-file my-sound.wav | |                 | | | |
-  |                                  | JACK daemon     | | | |
-  +- - - - - - - - - - - - - - - - + +-----------------+ | | |
-                                                         | | |
-        +-------------------------------------+          | | |
-        | dummy output (system:* jack ports)  <----------+ | |
-        +-------------------------------------+            | |
-                                                           | |
-        +-------------------------------------+            | |
-        |                                     |            | |
-        | ALSA Card-A [alsa_out -d hw:CARD=A] <------------+ |
-   +-----  (alsa_out*:playback_* jack ports)  |              |
-   |    |                                     |              |
-   |    +-------------------------------------+              |
-   |                                                         |
-   |    +-------------------------------------+              |
-   |    |                                     |              |
-   |    | ALSA Card-B [alsa_out -d hw:CARD=B] <--------------+
-   | +---  (alsa_out*:playback_* jack ports)  |
-   | |  |                                     |
-   | |  +-------------------------------------+
-   | |
-   | +--------------------------------+
-   |                                  |
-   |    +------------------------+  +-v----------------------+
-   |    |                        |  |                        |
-   +---->       Speakers-A       |  |       Speakers-B       |
-        |                        |  |                        |
-        +------------------------+  +------------------------+
-
-Diagram above depicts the case when call arrives from SIP network and
-PagingServer connects that instead of music to all speakers (default
-configuration is to use all outputs), after playing klaxon sound (if specified).
-
-Other misc points about this setup:
-
-* All links inside "JACK daemon" are configurable, with ones specified in the
-  PagingServer config (see below) being managed (i.e. connected/disconnected)
-  by it.
-
-  Think of jackd as a `patch panel`_, where you have jack holes (ports), and can
-  connect any of them to (any number of) others with jack-jack cables.
-
-* "dummy output" exists if/because JACK1 is started as ``jackd -d dummy``, each
-  ALSA device (or whatever other output) then gets connected to it by separate
-  "bridge" process (e.g. "alsa_out").
-
-  Separate "alsa_out" processes are only applicable to JACK1, I think JACK2
-  handles that case by a daemon module.
-
-* There can be any number of outputs (e.g. ALSA sound cards) connected, just run
-  bridges for these (or connect via daemon module in JACK2).
-
-  Diagram above depicts two ALSA cards connected.
-
-  See "JACK output configuration" section below for more info on these.
-
-* Note that "alsa_out" process generally creates two separate ports, one for
-  left channel/speaker and one for right.
-
-* Instead of "mpd player" there can be anything that can output sound to jack,
-  e.g. mpg123, mpv, mplayer, ffmpeg or anything else, really.
-
-  Just be sure to configure the thing to output via JACK and configure
-  PagingServer to manage (connect/disconnect) that port via ``jack-music-*``
-  options (see below).
-
-  See also "Running mpd player connected to JACK" section under "Misc tips and
-  tricks" below.
 
 
 PagingServer audio configuration
@@ -439,9 +338,13 @@ Configuration here can be roughly divided into these sections (at the moment):
 
   As PortAudio (used by pjsua) can use one (and only one) of multiple backends
   at a time, and each of these backend can have multiple "ports" in turn,
-  ``pjsua-device`` should be configured to use JACK backend "device".
+  ``pjsua-device`` should be configured to use Pulse/ALSA backend "device".
 
-  To see all devices that PJSUA and PortAudio detects, run::
+  Usually when pulse is installed, "default" ALSA output goes through it, and
+  that is used by the script by default, so no addition configuration should be
+  necessary in that case.
+
+  Otherwise, to see all devices that PJSUA and PortAudio detects, run::
 
     % paging --dump-pjsua-devices
 
@@ -456,6 +359,7 @@ Configuration here can be roughly divided into these sections (at the moment):
       ...
       [13] dmix
       [14] default
+      [15] pulse
       [15] system
       [16] PulseAudio JACK Source
 
@@ -465,16 +369,16 @@ Configuration here can be roughly divided into these sections (at the moment):
   This should print a potentially-long list of "playback devices" (PJSUA
   terminology) that can be used for output there, as shown above.
 
-  JACK default output (as created by e.g. ``-d dummy`` option to jackd) in the
-  example list above is called "system" - same as in JACK, and should be matched
-  by default.
+  "aplay -L" command can also be used to match that with ALSA outputs.
 
-  If any other JACK-input/PortAudio-output should be used, it can be specified
-  either as numeric id (number in square brackets on the left) or regexp (python
-  style) to match against name in the list.
+  "pulse" is what you likely want there, if "default" is not using pulseaudio.
 
-  To avoid having any confusing non-JACK ports there, PortAudio can be compiled
-  with only JACK as a backend.
+  PortAudio-output should be specified either as numeric id (number in square
+  brackets on the left) or regexp (python style) to match against name in the
+  list via ``pjsua-device`` option.
+
+  To avoid having any confusing non-ALSA (incl. pulse-alsa emulation) ports
+  there, PortAudio can be compiled with only ALSA as a backend.
 
   ``pjsua-conf-port`` option can be used to match one of the "conference ports"
   from ``paging --dump-pjsua-conf-ports`` command output in the same fashion, if
@@ -482,150 +386,34 @@ Configuration here can be roughly divided into these sections (at the moment):
   example), otherwise it'll work fine with empty default.
 
 
-* JACK daemon startup and control client connection configuration.
-
-  Related configuration options:
-
-  * jack-autostart
-  * jack-server-name
-  * jack-client-name
-
-  All of these are common JACK client settings, described in jackd(1),
-  jackstart(1) manpages, libjack or `jack-client module documentation`_.
-
-  With exception for self-explanatory ``jack-autostart`` (enabled by default),
-  these options should be irrelevant, unless this script is used with multiple
-  JACK instances or clients.
-
-
-* Configuration for any non-call inputs (music, klaxons, etc) for JACK.
+* Configuration for any non-call inputs (music, klaxons, etc) for pulse.
 
   Related configuration options:
 
   * klaxon
-  * jack-music-client-name
-  * jack-music-links
+  * pulse-mute
 
   "klaxon" can be a path to any file that has sound in it (that ffmpeg would
-  understand), and will be played before each announcement call on all
-  "jack-output-ports" (see below), and before that call gets answered.
+  understand), and will be played before each announcement call gets picked-up.
 
-  "jack-music-client-name" should be a regexp to match outputs of music clients,
-  that should play stuff in-between announcements, and "jack-music-links" allows
-  to control which set(s) of speakers they'll be connected to.
+  "pulse-mute" should be a regexp to match any sufficiently unique property of
+  music streams, that would play in-between announcements.
 
-  For example, if mpd.conf has something like this::
+  For example, if mpd_ player is used for music output, ``pulse-mute =
+  ^application\.name=mpd$`` setting should match and mute all running player
+  instances as necessary.
 
-    audio_output {
-      type "jack"
-      name "jack"
-      client_name "mpd.paging:test"
-    }
+  Script can be run with ``--debug --dump-pulse-props`` option to show
+  properties of each PulseAudio stream, and info on when/whether they match
+  ``pulse-mute`` option.
 
-  Then configuration like this (these are actually defaults)::
-
-    jack-music-client-name = ^mpd\.paging:(.*)$
-    jack-music-links = left---left right---right
-
-  Will connect output from that player to all speakers matched by
-  "jack-output-ports" (all available to JACK by default).
-
-  Script can be run with ``--dump-jack-ports`` option to show all JACK ports
-  that are currently available - all connected players, speakers, cards and such.
-
-  See more detailed description of these options and how they're interpreted in
-  `paging.example.conf`_.
-
-
-* List of hardware outputs (ALSA PCMs) to use as JACK final outputs/sinks.
-
-  Related configuration options:
-
-  * jack-output-ports
-
-  Same as with PJSUA outputs/ports above, ``jack-output-ports`` can be
-  enumerated via ``paging --dump-jack-ports`` command, and filtered by direct id
-  or name regexp, if necessary.
-
-  Default is to route PJSUA call to all outputs available in JACK.
+  See `paging.example.conf`_ for more detailed info on these options.
 
 
 All settings mentioned here are located in the ``[audio]`` section of the
 configuration file.
 
 See `paging.example.conf`_ for more detailed descriptons.
-
-
-JACK output configuration
-`````````````````````````
-
-This relates to the very last step in the "audio flow" list above, and only
-required if "paging-jack-out-all" service using all ALSA cards suggested in the
-"Installation" section above is not desirable for some reason.
-
-Also, it only applies if JACK1 is used (as suggested in "Installation" section),
-for JACK2 see its official documentation on audio adapters.
-
-By default, when started via systemd unit file from this repo (e.g. ``systemctl
-start jack@paging`` or pulled-in as a dependency for ``paging`` service), or via
-``jackd -d dummy`` as suggested in "Start/run in the foreground" section above,
-jack does not use any hardware audio outputs.
-
-To add these at any time, install alsa-utils (if not installed already) and use
-``aplay -L`` command to list audio output hardware available::
-
-  % aplay -L | grep -A2 ^default
-  default:CARD=I82801AAICH
-      Intel 82801AA-ICH, Intel 82801AA-ICH
-      Default Audio Device
-  --
-  default:CARD=Intel
-      HDA Intel, ID 22 Analog
-      Default Audio Device
-
-Here aplay listed two audio cards, which can be used with JACK1's "alsa_out"
-client as ``hw:CARD=I82801AAICH`` and ``hw:CARD=Intel`` respectively.
-
-To add output through second "HDA Intel" sound card to jack, "alsa_out" client
-(running as daemon) should be started with that card name, e.g. to do it
-manually from console::
-
-  % alsa_out -d hw:CARD=Intel &>/dev/null
-
-This will run indefinitely, serving as a bridge between JACK1 "jackd" daemon and
-specified sound hardware outputs.
-
-Keep in mind that "alsa_out" processes must be started with the same uid (user)
-as jackd, and have access to audio hardware (i.e. have "audio" group on most
-distros, if user is not root).
-
-To have distinct (and less confusing) names for jack ports that alsa_out creates
-(default is alsa_out, alsa_out-01, alsa_out-02, ...), ``alsa_out -j my-port-name
-...`` option can be used.
-
-For production use, it'd make sense to start this process for every needed card
-on system boot.
-
-This can be done via ``paging-jack-out-all.service`` unit file from the repo
-(should be installed with "paging-server" package) for all cards::
-
-  % systemctl start paging-jack-out-all
-  % systemctl enable paging-jack-out-all
-
-Alternatively, to only enable specific cards (with names from ``aplay -L``
-output above), ``paging-jack-out@.service`` unit file can be used instead.
-
-Example for enabling only ``CARD=I82801AAICH``::
-
-  % systemctl stop paging-jack-out-all
-  % systemctl disable paging-jack-out-all
-
-  % card_unit=$(systemd-escape --template paging-jack-out@.service hw:CARD=I82801AAICH)
-  % systemctl start $card_unit
-  % systemctl enable $card_unit
-
-Note that "systemd-escape" is used to convert whatever raw name from alsa to
-properly-escaped systemd unit instance.
 
 
 
@@ -650,66 +438,6 @@ Might help to avoid startup delays due to conversion of these on each run.
 If pjsua will be complaining about sample-rate difference between wav file and
 output, e.g. ``-ar 44100`` option can be used (after ``-f wav``) to have any
 sampling rate for the output file.
-
-
-Running JACK on a system where PulseAudio is the main sound server
-``````````````````````````````````````````````````````````````````
-
-First of all, jackd has to be started manually there, and strictly before
-pulseaudio server.
-
-``/etc/pulse/default.pa`` should have something like this at the end
-(after default sink - probably alsa - init!)::
-
-  load-module module-jack-source source_name=jack_in
-  load-module module-loopback source=jack_in
-
-That will create an output from JACK to PulseAudio and from there to whatever
-actually makes sound on the particular system, provided that the loopback stream
-and source in question are not muted and have some non-zero volume set in pulse.
-
-"module-jack-source" has options for picking which jackd to connect to, if isn't
-not "default", "module-loopback" after it creates a stream from that jack source
-to a default sink (which is probably an ALSA sink).
-
-On the JACK side, "PulseAudio JACK Source" port (sink) gets created, and
-anything connected there will make its way to pulseaudio.
-
-
-Running mpd player connected to JACK
-````````````````````````````````````
-
-Music Player Daemon (mpd_) is a nice player, well-suited for purposes of
-hands-off playing music all day long in-between any kind of announcements.
-
-It also has `a vast number of clients`_, including evertyhing from IR remote
-listeners (via lirc), bluetooth phones, car stereos, to more conventional
-desktop apps and WebUIs.
-
-Example configuration for mpd with JACK output and "client_name" recognized by
-default PagingServer configuration and suitable for playing pretty much
-anything::
-
-  log_file "/dev/stdout"
-  music_directory "/mnt/music"
-
-  # password "super-secret-admin-password@read,add,control,admin"
-  # password "password-for-teh-peeple@read,add,control"
-
-  input {
-    plugin "curl"
-  }
-
-  audio_output {
-    type "jack"
-    name "jack"
-    client_name "mpd.paging:test"
-    autostart "no"
-  }
-
-Note that "password" lines are commented-out, which will allow any client to
-connect without any kind of authorization, so it might be a good idea to change
-these if control port is to be exposed to any kind of non-localhost network.
 
 
 Benchmark script (callram.py)
@@ -762,21 +490,8 @@ Sentry_ is a "modern error logging and aggregation platform".
 
 Python raven_ module has to be installed in order for this to work.
 
-If you followed manual installation instructions from README.install.rst, then
-it should be installed into the same virtualenv as the PagingServer itself,
-i.e. from a root shell run::
-
-  % su - paging
-  % . PagingServer/bin/activate
-  % pip install raven
-  % exit
-
-Otherwise that module can be installed from an OS package, if available
-(recommended), or via standard python packaging tools (see `python packaging
-tutorial`_).
-
-Then uncomment and/or set "sentry_dsn" option under the ``[server]`` section of
-the configuration file.
+Uncomment and/or set "sentry_dsn" option under the ``[server]`` section of the
+configuration file.
 
 It can also be set via ``--sentry-dsn`` command-line option, e.g. in systemd
 unit distributed with the package, to apply on all setups where package is deployed.
@@ -790,31 +505,24 @@ Copyright and License
 | Code released under the GNU General Public License v2.0.
 | See LICENSE file in the repository for more details.
 | Docs released under Creative Commons.
-| Please don't be a dick about it.
 
 
 
 .. _PJSUA: http://www.pjsip.org/
-.. _JACK: http://jackaudio.org/
+.. _PulseAudio: https://wiki.freedesktop.org/www/Software/PulseAudio/
 .. _ALSA: http://www.alsa-project.org/main/index.php/Main_Page
 .. _ini format: https://en.wikipedia.org/wiki/INI_file
-.. _patch panel: https://en.wikipedia.org/wiki/Patch_panel
 .. _paging.example.conf: https://github.com/AccelerateNetworks/PagingServer/blob/master/paging.example.conf
 .. _PortAudio: http://www.portaudio.com/
-.. _somewhat unstable patch: https://build.opensuse.org/package/show/home:illuusio:portaudio/portaudio
-.. _comment on #3: https://github.com/AccelerateNetworks/PagingServer/issues/3#issuecomment-128797116
-.. _jack-client module documentation: https://jackclient-python.readthedocs.org/#jack.Client
 .. _ffmpeg: http://ffmpeg.org/
 .. _systemctl(1) manpage: http://www.freedesktop.org/software/systemd/man/systemctl.html
 .. _mpd: http://musicpd.org/
-.. _a vast number of clients: http://mpd.wikia.com/wiki/Clients
 .. _Sentry: https://getsentry.com/
 .. _pip: http://pip-installer.org/
 .. _pip2014.com: http://pip2014.com/
 .. _python packaging tutorial: https://packaging.python.org/en/latest/installing.html
 .. _Python 2.7: http://python.org/
-.. _JACK-Client python module: https://pypi.python.org/pypi/JACK-Client/
+.. _pulsectl python module: https://github.com/mk-fg/python-pulse-control
 .. _raven: https://pypi.python.org/pypi/raven/5.5.0
 .. _python-systemd: https://github.com/systemd/python-systemd
-.. _README.install.rst: https://github.com/AccelerateNetworks/PagingServer/blob/master/README.install.rst
-.. _install.debian_jessie.sh: https://github.com/AccelerateNetworks/PagingServer/blob/master/install.debian_jessie.sh
+.. _install.debian_jessie.sh: https://github.com/AccelerateNetworks/PagingServer/blob/master/setup-scripts/install.debian_jessie.sh
