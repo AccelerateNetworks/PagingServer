@@ -42,13 +42,17 @@ run_apt_get() {
 			--force-yes -y "$@"
 }
 
+get_repo_file() {
+	wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/"$1"
+}
+
 
 
 echo
 echo '-----===== Step: install.debian_jessie.from_debs.sh'
 echo
 
-wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/install.debian_jessie.from_debs.sh | bash
+get_repo_file setup-scripts/install.debian_jessie.from_debs.sh | bash
 
 
 echo
@@ -147,7 +151,19 @@ echo
 echo '-----===== Step: starting/enabling PagingServer-related stuff'
 echo
 
-# XXX: mpd, pulse, etc setup here
+run_apt_get install --no-install-recommends mpd mpc
+
+get_repo_file setup-configs/paging.pa |
+	sed 's|\( module-alsa-sink device=sysdefault\) |\1:CARD=audiocodec |' |
+	cat >/etc/pulse/paging.pa
+
+get_repo_file setup-configs/mpd.instance.conf |
+	sed 's|instance|speakers|' >/etc/mpd.speakers.conf
+
+get_repo_file setup-configs/mpd@.service >/etc/systemd/system/mpd@.service
+get_repo_file setup-configs/pulse.service >/etc/systemd/system/pulse.service
+
+systemctl enable mpd@speakers
 
 if awk 'p&&/^\[/ {p=0} /^\[sip\]$/ {p=1} p&&/^ *(domain|user|pass) *= *<(sip server|username|password)>$/ {exit 1}' /etc/paging.conf
 then
@@ -163,6 +179,11 @@ then
 	echo " or its sound outputs will be crashing repeatedly, whole system will reboot."
 	echo "So make sure that either configuration always stays correct,"
 	echo " or run:  rm /etc/systemd/system/*.service.d/paging-reboot-on-fail.conf"
+	echo
+	echo "To auto-start radio playback on boot, create either"
+	echo " /etc/mpd.speakers.url with e.g. 'https://live.uwave.fm:8443/listen-128.mp3.m3u' inside,"
+	echo " or /etc/mpd.speakers.m3u with list of tracks or urls to play."
+	echo "*.url file will be re-downloaded every time mpd starts."
 	echo
 	echo "Have a nice day."
 	echo
