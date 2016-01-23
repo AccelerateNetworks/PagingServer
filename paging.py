@@ -395,6 +395,30 @@ class PSCallState(PSCallbacks):
 
 class PulseClient(object):
 
+    @staticmethod
+    def enum_outputs(sink_list):
+        outs, uids = dict(), it.chain.from_iterable(it.imap(xrange, it.repeat(2**30)))
+        for s in sink_list:
+            dev, api = None, s.proplist.get('device.api', 'no-api')
+            if api == 'alsa': dev = s.proplist.get('alsa.id')
+            else: dev = s.proplist.get('device.description')
+            if not dev: dev = s.name
+            k = '_'.join('{}-{}'.format(api, dev).split())
+            if k in outs:
+                if outs[k]:
+                    k_uid = '{}#{}'.format(k, next(uids))
+                    outs[k_uid], outs[k] = outs[k], None
+                k = '{}#{}'.format(k, next(uids))
+            outs[k] = s
+        for k, s in outs.items():
+            if not s:
+                del outs[k]
+                continue
+            else: outs[k] = outs[k], s.channel_count, None
+            for n, c in enumerate(s.channel_list or list()):
+                outs['{}@{}'.format(c, k)] = s, 1, n
+        return outs
+
     def __init__(self, si_filter_regexp, si_filter_debug=False):
         from pulsectl import ( Pulse, PulseSinkInputInfo,
             PulseLoopStop, PulseIndexError, PulseError )
@@ -407,7 +431,7 @@ class PulseClient(object):
         self.log = get_logger()
 
     def init(self):
-        self.pulse = self._connect('paging')
+        self.pulse = self._connect('paging-server')
         self.pulse.event_mask_set('sink_input')
         self.pulse.event_callback_set(self._handle_new_sink)
         self.si_queue = deque()
@@ -777,6 +801,8 @@ def main(args=None, defaults=None):
         help='Dump the list of sound devices that pjsua/portaudio detects and exit.')
     group.add_argument('--dump-pjsua-conf-ports', action='store_true',
         help='Dump the list of conference ports that pjsua creates after init and exit.')
+    group.add_argument('--dump-pulse-outputs', action='store_true',
+        help='Dump the list of PulseAudio outputs which can be specified in config file.')
     group.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file from pjsua output and exit.'
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
@@ -882,6 +908,16 @@ def main(args=None, defaults=None):
             ports = server.get_pj_conf_ports()
             pprint_infos(ports, 'Detected conference ports')
         return
+
+    if opts.dump_pulse_outputs:
+        from pulsectl import Pulse
+        with Pulse('paging-server-probe') as p:
+            pprint_infos(
+                sorted( ( dict(name=k, channel_count=ns)
+                    for k, (s, ns, n) in PulseClient.enum_outputs(p.sink_list()).viewitems() ),
+                    key=op.itemgetter('name') ),
+                'Detected pulse outputs' )
+            return
 
     if opts.test_audio_file:
         opts.test_audio_file = ffmpeg_towav(opts.test_audio_file)
