@@ -14,13 +14,13 @@ ExecStart=/usr/bin/env mpd --no-daemon /etc/mpd.%I.conf
 ExecStartPost=/bin/bash -c '\
 	set -e -o pipefail;\
 	[[ ! -e /etc/mpd.%I.url ]] || {\
-		curl -s /etc/mpd.%I.url >/etc/mpd.%I.m3u\
-			|| wget -q -O- /etc/mpd.%I.url >/etc/mpd.%I.m3u; };\
+		xargs curl -s </etc/mpd.%I.url >/etc/mpd.%I.m3u\
+			|| xargs wget -q -O- </etc/mpd.%I.url >/etc/mpd.%I.m3u; };\
 	[[ ! -e /etc/mpd.%I.m3u ]] || {\
 		sleep 2; mpc="mpc --wait -h /run/mpd-paging/%I";\
-		$mpc clear;\
 		$mpc repeat on;\
-		xargs -n1 $mpc insert </etc/mpd.%I.m3u;\
+		$mpc clear;\
+		tr -d \'\r\' </etc/mpd.%I.m3u | $mpc add;\
 		$mpc play; }'
 
 [Install]

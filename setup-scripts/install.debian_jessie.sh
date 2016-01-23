@@ -216,7 +216,14 @@ EOF
 paging --version
 
 
-id paging || useradd -r -d /var/empty -s /bin/false -G audio paging
+if getent passwd paging &>/dev/null ; then
+	[[ -e /home/paging ]] || {
+		usermod -d /home/paging paging
+		mkdir -p -m700 /home/paging
+		chown -R paging: /home/paging
+	}
+else useradd -r -d /home/paging -s /bin/false -G audio paging
+fi
 
 [[ -e /etc/paging.conf ]]\
 	|| install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf

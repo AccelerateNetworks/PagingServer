@@ -11,7 +11,7 @@ except IOError: readme = ''
 setup(
 
     name = 'PagingServer',
-    version = '16.1.26',
+    version = '16.1.27',
     author = 'Dan Ryan, Mike Kazantsev',
     author_email = 'dan@seattlemesh.net, mk.fraggod@gmail.com',
     license = 'GPL-2',
@@ -43,7 +43,7 @@ setup(
         'Topic :: Multimedia :: Sound/Audio :: Mixers',
         'Topic :: Multimedia :: Sound/Audio :: Speech' ],
 
-    install_requires = ['setuptools', 'pulsectl'],
+    install_requires = ['pulsectl'],
     extras_require = {'sentry': ['raven']},
 
     py_modules=['paging'],

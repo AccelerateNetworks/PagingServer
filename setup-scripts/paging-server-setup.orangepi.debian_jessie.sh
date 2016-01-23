@@ -43,7 +43,7 @@ run_apt_get() {
 }
 
 get_repo_file() {
-	wget -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/"$1"
+	wget -q -O- https://raw.githubusercontent.com/AccelerateNetworks/PagingServer/master/"$1"
 }
 
 
@@ -144,7 +144,6 @@ for s in paging ; do
 	echo '[Service]' >"$s"
 	echo 'StartLimitAction=reboot' >>"$s"
 done
-systemctl daemon-reload
 
 
 echo
@@ -152,6 +151,8 @@ echo '-----===== Step: starting/enabling PagingServer-related stuff'
 echo
 
 run_apt_get install --no-install-recommends mpd mpc
+systemctl disable mpd
+systemctl stop mpd
 
 get_repo_file setup-configs/paging.pa |
 	sed 's|\( module-alsa-sink device=sysdefault\) |\1:CARD=audiocodec |' |
@@ -163,6 +164,7 @@ get_repo_file setup-configs/mpd.instance.conf |
 get_repo_file setup-configs/mpd@.service >/etc/systemd/system/mpd@.service
 get_repo_file setup-configs/pulse.service >/etc/systemd/system/pulse.service
 
+systemctl daemon-reload
 systemctl enable mpd@speakers
 
 if awk 'p&&/^\[/ {p=0} /^\[sip\]$/ {p=1} p&&/^ *(domain|user|pass) *= *<(sip server|username|password)>$/ {exit 1}' /etc/paging.conf
@@ -184,6 +186,10 @@ then
 	echo " /etc/mpd.speakers.url with e.g. 'https://live.uwave.fm:8443/listen-128.mp3.m3u' inside,"
 	echo " or /etc/mpd.speakers.m3u with list of tracks or urls to play."
 	echo "*.url file will be re-downloaded every time mpd starts."
+	echo
+	echo "mpd music player will be started on boot, or you can"
+	echo "  create url/m3u file and (re)start it manually, using command:"
+	echo " systemctl restart mpd@speakers"
 	echo
 	echo "Have a nice day."
 	echo
