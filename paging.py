@@ -22,7 +22,7 @@ class Conf(object):
     audio_klaxon_tmpdir = ''
     audio_klaxon_max_length = 10.0
     audio_klaxon_padding = 0.0
-    audio_pjsua_device = '^default$'
+    audio_pjsua_device = '^pulse$'
     audio_pjsua_conf_port = '' # there should be only one
     audio_pulse_mute = '^application\.process\.binary=mpd$'
 

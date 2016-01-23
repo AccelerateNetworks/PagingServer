@@ -340,8 +340,8 @@ Configuration here can be roughly divided into these sections (at the moment):
   at a time, and each of these backend can have multiple "ports" in turn,
   ``pjsua-device`` should be configured to use Pulse/ALSA backend "device".
 
-  Usually when pulse is installed, "default" ALSA output goes through it, and
-  that is used by the script by default, so no addition configuration should be
+  Usually when pulse is installed, "pulse" ALSA output gets configured, and that
+  is what script uses by default, so no addition configuration should be
   necessary in that case.
 
   Otherwise, to see all devices that PJSUA and PortAudio detects, run::
@@ -370,8 +370,6 @@ Configuration here can be roughly divided into these sections (at the moment):
   terminology) that can be used for output there, as shown above.
 
   "aplay -L" command can also be used to match that with ALSA outputs.
-
-  "pulse" is what you likely want there, if "default" is not using pulseaudio.
 
   PortAudio-output should be specified either as numeric id (number in square
   brackets on the left) or regexp (python style) to match against name in the
