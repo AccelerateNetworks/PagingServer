@@ -30,6 +30,7 @@ apt-get update
 
 apt_install --no-install-recommends pulseaudio pulseaudio-utils alsa-utils
 apt_install paging-server python-systemd
+apt_install python-setuptools # missing dep for older packages
 
 if getent passwd paging &>/dev/null ; then
 	[[ -e /home/paging ]] || {

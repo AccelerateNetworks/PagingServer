@@ -128,7 +128,7 @@ dpkg_check pjproject python-pjsua >/dev/null || {
 
 	chk_install -y\
 		--pkgname=python-pjsua --pkgversion="${pj_ver}"\
-		--requires 'python,pjproject'\
+		--requires 'python,pjproject,python-setuptools'\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb
 
@@ -157,7 +157,7 @@ dpkg_check python-pulsectl || {
 	chk_install -y\
 		--pkgname=python-pulsectl\
 		--pkgversion=$(grep 'version' setup.py | grep -o '[0-9.]\+')\
-		--requires 'python,libpulse0'\
+		--requires 'python,libpulse0,python-setuptools'\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
 
@@ -178,7 +178,7 @@ dpkg_check python-systemd || {
 	chk_install -y\
 		--pkgname=python-systemd\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--requires 'systemd,libsystemd0,libsystemd-daemon0,libsystemd-journal0,libsystemd-id128-0'\
+		--requires 'systemd,libsystemd0,libsystemd-daemon0,libsystemd-journal0,libsystemd-id128-0,python-setuptools'\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb
 
@@ -203,7 +203,7 @@ EOF
 	chk_install -y\
 		--pkgname=paging-server\
 		--pkgversion=$(grep 'version *=' setup.py | grep -o '[0-9.]\+')\
-		--requires 'pjproject,python,python-pkg-resources,python-pjsua,python-pulsectl'\
+		--requires 'pjproject,python,python-pkg-resources,python-pjsua,python-pulsectl,python-setuptools'\
 		--include extras.list\
 		-- python2 setup.py install\
 			--prefix=/usr --install-layout=deb --old-and-unmanageable
