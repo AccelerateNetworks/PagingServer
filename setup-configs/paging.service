@@ -1,7 +1,6 @@
 [Unit]
-Requires=pulse.service
 After=network.target network-online.target sound.target pulse.service
-Wants=network-online.target
+Wants=network-online.target pulse.service
 
 [Service]
 Type=notify
