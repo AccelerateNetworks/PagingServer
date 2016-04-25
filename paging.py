@@ -377,7 +377,7 @@ class PSCallState(PSCallbacks):
         self.log.debug(
             'call [%s] state change: %r -> %r (SIP status: %s %s)',
             self.caller, state_last, self.call_state, ci.last_code, ci.last_reason )
-        if self.call_state == 'disconncted': self.acc.on_cs_disconnected(self)
+        if self.call_state == 'disconnected': self.acc.on_cs_disconnected(self)
 
     @err_report
     def on_media_state(self, _state_dict=dict()):
