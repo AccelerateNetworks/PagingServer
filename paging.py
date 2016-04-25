@@ -437,7 +437,8 @@ class PulseClient(object):
             self.pulse.close()
             self.pulse = None
 
-    def set_music_mute(self, muted):
+    def set_music_mute(self, muted=None):
+        if muted is None: muted = self.music_muted
         if self.music_muted and not muted: fade = 'in'
         elif not self.music_muted and muted: fade = 'out'
         else: fade = None
@@ -464,87 +465,15 @@ class PulseClient(object):
             if m: return si
         # self.log.debug('Ignoring unmatched sink-input: %s', si)
 
-    def poll_wakeup(self):
-        if not self.pulse: return
-        self.pulse.event_listen_stop()
-
     @err_report
-    def poll(self, timeout=None):
-        # Only safe to call pulse stuff from here
-        deadline = mono_time() + timeout
-        delay = [deadline]
+    def _process_changes(self):
+        wakeups = list()
 
         if self.changes:
             if 'pjsua-volume' in self.changes:
-                t, v = self.changes.pop('pjsua-volume')
-                if not self.si_pjsua:
-                    pid = os.getpid()
-                    for si in self.pulse.sink_input_list():
-                        pid_chk = int(si.proplist.get('application.process.id') or 0)
-                        m = pid_chk == pid
-                        if self.si_filter_debug:
-                            self.log.debug( 'Sink-input %s proc-id check: %s (si) =='
-                                ' %s (pjsua)%s', si.index, pid_chk, pid, ' [MATCH]' if m else '' )
-                        if m: self.si_pjsua = si
-                if self.si_pjsua:
-                    try:
-                        v_old = self.pulse.volume_get_all_chans(self.si_pjsua)
-                        if round(v, 2) != round(v_old, 2):
-                            self.log.debug( 'Setting pjsua stream'
-                                ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
-                        self.pulse.volume_set_all_chans(self.si_pjsua, v)
-                    except self.PulseIndexError: self.si_pjsua = None
-                else:
-                    self.log.warn( 'Failed to detect pjsua stream'
-                        ' in pulse sink inputs, not adjusting volume for it' )
+                wakeups.extend(self._set_volume() or list())
             if 'music-fade' in self.changes:
-                t, state = self.changes['music-fade']
-                if not state:
-                    state = self.fade[t].copy()
-                    if state['duration'] >= 0:
-                        state.update( step=1, vol_base=dict(),
-                            ts_start=mono_time() + state['offset'],
-                            si_list=filter(self._match_music_si, self.pulse.sink_input_list()) )
-                        if t == 'out':
-                            state['vol_base'].update(
-                                (si.index, self.pulse.volume_get_all_chans(si)) for si in state['si_list'] )
-                            self.volume['fade'] = state['vol_base'] # to restore same levels on fade-in
-                        else:
-                            vol_base, vol_base_prev = state['vol_base'], self.volume.pop('fade', dict())
-                            for si in state['si_list']:
-                                if si.index in vol_base_prev: vol_base[si.index] = vol_base_prev[si.index]
-                                elif self.volume['music'] > 0: vol_base[si.index] = self.volume['music']
-                        self.log.debug( 'Starting music fade-%s'
-                            ' for %s pulse stream(s)', t, len(state['vol_base']) )
-                    else: state['step'] = state['steps']
-                    self.changes['music-fade'] = t, state
-                for n in xrange(state['step'], state['steps']):
-                    state['step'], n, ts = n, n + 1, mono_time()
-                    ts_step = state['ts_start'] + (state['duration'] * (n / float(state['steps'])))
-                    if ts_step > ts:
-                        delay.append(ts_step)
-                        break
-                    for si in state['si_list']:
-                        try: v_base = state['vol_base'][si.index]
-                        except KeyError: continue
-                        v_range, k = max(0, v_base - state['min']), n / float(state['steps'])
-                        if t == 'out': k = 1 - k
-                        v = state['min'] + v_range * k
-                        # self.log.debug( 'Stream %s music fade-%s step'
-                        # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, state['steps'], v_base, v )
-                        try: self.pulse.volume_set_all_chans(si, v)
-                        except self.PulseIndexError: pass
-                else:
-                    v = None
-                    if t == 'in':
-                        if self.volume['music'] > 0: v = self.volume['music']
-                    else: v = 0
-                    if v is not None:
-                        for si in state['si_list']:
-                            try: self.pulse.volume_set_all_chans(si, v)
-                            except self.PulseIndexError: pass
-                        self.log.debug('Finished music fade-%s sequence, final volume: %.2f', t, v)
-                    del self.changes['music-fade']
+                wakeups.extend(self._set_fade() or list())
 
         while self.si_queue:
             si = self.si_queue.popleft()
@@ -561,7 +490,98 @@ class PulseClient(object):
                     self.pulse.mute(si, self.music_muted)
             except self.PulseIndexError: continue
 
-        delay = min(delay) - mono_time()
+        return wakeups
+
+    @err_report
+    def _set_volume(self):
+        t, v = self.changes.pop('pjsua-volume')
+        if not self.si_pjsua:
+            pid = os.getpid()
+            for si in self.pulse.sink_input_list():
+                pid_chk = int(si.proplist.get('application.process.id') or 0)
+                m = pid_chk == pid
+                if self.si_filter_debug:
+                    self.log.debug( 'Sink-input %s proc-id check: %s (si) =='
+                        ' %s (pjsua)%s', si.index, pid_chk, pid, ' [MATCH]' if m else '' )
+                if m: self.si_pjsua = si
+        if self.si_pjsua:
+            try:
+                v_old = self.pulse.volume_get_all_chans(self.si_pjsua)
+                if round(v, 2) != round(v_old, 2):
+                    self.log.debug( 'Setting pjsua stream'
+                        ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
+                self.pulse.volume_set_all_chans(self.si_pjsua, v)
+            except self.PulseIndexError: self.si_pjsua = None
+        else:
+            self.log.warn( 'Failed to detect pjsua stream'
+                ' in pulse sink inputs, not adjusting volume for it' )
+
+    @err_report
+    def _set_fade(self):
+        t, state = self.changes['music-fade']
+        if not state: # start new "fade sequence"
+            state = self.fade[t].copy()
+            if state['duration'] >= 0:
+                state.update( step=1, vol_base=dict(),
+                    ts_start=mono_time() + state['offset'],
+                    si_list=filter(self._match_music_si, self.pulse.sink_input_list()) )
+                if t == 'out':
+                    state['vol_base'].update(
+                        (si.index, self.pulse.volume_get_all_chans(si)) for si in state['si_list'] )
+                    self.volume['fade'] = state['vol_base'] # to restore same levels on fade-in
+                else:
+                    self.set_music_mute()
+                    vol_base, vol_base_prev = state['vol_base'], self.volume.pop('fade', dict())
+                    for si in state['si_list']:
+                        v = None
+                        if si.index in vol_base_prev: v = vol_base_prev[si.index]
+                        elif self.volume['music'] > 0: v = self.volume['music']
+                        if v is not None:
+                            vol_base[si.index] = v
+                            try: self.pulse.volume_set_all_chans(si, state['min'])
+                            except self.PulseIndexError: pass
+                self.log.debug( 'Starting music fade-%s'
+                    ' for %s pulse stream(s)', t, len(state['vol_base']) )
+            else: state['step'] = state['steps']
+            self.changes['music-fade'] = t, state
+
+        for n in xrange(state['step'], state['steps']):
+            state['step'], n, ts = n, n + 1, mono_time()
+            ts_step = state['ts_start'] + (state['duration'] * (n / float(state['steps'])))
+            if ts_step > ts: return [ts_step] # loop should continue at that ts
+            for si in state['si_list']:
+                try: v_base = state['vol_base'][si.index]
+                except KeyError: continue
+                v_range, k = max(0, v_base - state['min']), n / float(state['steps'])
+                if t == 'out': k = 1 - k
+                v = state['min'] + v_range * k
+                # self.log.debug( 'Stream %s music fade-%s step'
+                # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, state['steps'], v_base, v )
+                try: self.pulse.volume_set_all_chans(si, v)
+                except self.PulseIndexError: pass
+
+        else: # finished "fade sequence"
+            v = None
+            if t == 'in':
+                if self.volume['music'] > 0: v = self.volume['music']
+            else: v = 0
+            if v is not None:
+                for si in state['si_list']:
+                    try: self.pulse.volume_set_all_chans(si, v)
+                    except self.PulseIndexError: pass
+                self.log.debug('Finished music fade-%s sequence, final volume: %.2f', t, v)
+            self.set_music_mute()
+            del self.changes['music-fade']
+
+    def poll_wakeup(self):
+        if not self.pulse: return
+        self.pulse.event_listen_stop()
+
+    @err_report
+    def poll(self, timeout=None):
+        # Only safe to call pulse here, and before event_listen()
+        wakeups = [mono_time() + timeout] + self._process_changes()
+        delay = min(wakeups) - mono_time()
         if delay > 0:
             try: self.pulse.event_listen(delay)
             except:
