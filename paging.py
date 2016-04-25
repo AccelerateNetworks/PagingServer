@@ -24,7 +24,18 @@ class Conf(object):
     audio_klaxon_padding = 0.0
     audio_pjsua_device = '^pulse$'
     audio_pjsua_conf_port = '' # there should be only one
-    audio_pulse_mute = '^application\.process\.binary=mpd$'
+    audio_pulse_match = '^application\.process\.binary=mpd$'
+
+    audio_volume_music = -1.0
+    audio_volume_klaxon = -1.0
+    audio_volume_call = -1.0
+
+    audio_music_fade_in_duration = 10.0
+    audio_music_fade_out_duration = 3.0
+    audio_music_fade_in_offset = 0.0
+    audio_music_fade_out_offset = 0.0
+    audio_music_fade_in_min = 0.0
+    audio_music_fade_out_min = 0.0
 
     calls_hold_concurrent = False
     calls_hang_up_after_minutes = 5.0
@@ -286,7 +297,9 @@ class PSAccountState(PSCallbacks):
         self.log.info('Handling call: %s', cs.caller)
         self.call_active = cs
         self.server.set_music_mute(True)
+        self.server.set_volume_level('klaxon')
         self.server.wav_play_sync(self.server.conf.audio_klaxon)
+        self.server.set_volume_level('call')
         cs.call.answer()
         if self.hang_up_after > 0:
             self.server.poll_callback(ft.partial(
@@ -395,7 +408,7 @@ class PSCallState(PSCallbacks):
 
 class PulseClient(object):
 
-    def __init__(self, si_filter_regexp, si_filter_debug=False):
+    def __init__(self, si_filter_regexp, si_filter_debug=False, volume=None, fade=None):
         from pulsectl import ( Pulse, PulseSinkInputInfo,
             PulseLoopStop, PulseIndexError, PulseError )
         # Running client here might start pa pid, so defer it until we actually
@@ -406,11 +419,17 @@ class PulseClient(object):
             PulseIndexError, PulseError, PulseLoopStop
         self.log = get_logger()
 
+        self.volume = dict(zip(['music', 'klaxon', 'call'], it.repeat(-1)))
+        self.volume.update(volume or dict())
+        self.fade = dict((t, dict(duration=0, offset=0, min=0, steps=10)) for t in ['in', 'out'])
+        for t, v in self.fade.viewitems(): v.update((fade or dict()).get(t) or dict())
+
     def init(self):
         self.pulse = self._connect('paging-server')
         self.pulse.event_mask_set('sink_input')
-        self.pulse.event_callback_set(self._handle_new_sink)
-        self.si_queue = deque()
+        self.pulse.event_callback_set(self._handle_new_si)
+        self.si_queue, self.si_pjsua, self.changes = deque(), None, dict()
+        self.music_muted = False
         self.set_music_mute(False)
 
     def close(self):
@@ -418,14 +437,32 @@ class PulseClient(object):
             self.pulse.close()
             self.pulse = None
 
-    def set_music_mute(self, state):
-        self.music_muted = state
-        self.si_queue.append(None) # "mute all signal"
+    def set_music_mute(self, muted):
+        if self.music_muted and not muted: fade = 'in'
+        elif not self.music_muted and muted: fade = 'out'
+        else: fade = None
+        self.music_muted = muted
+        if fade: self.changes['music-fade'] = fade, None
+        else: self.si_queue.append(None)
 
-    def _handle_new_sink(self, ev):
+    def set_pjsua_volume(self, t):
+        if self.volume[t] >= 0: self.changes['pjsua-volume'] = t, self.volume[t]
+
+    def _handle_new_si(self, ev):
         if ev.t != 'new' or ev.facility != 'sink_input': return
         self.si_queue.append(ev.index)
         raise self.PulseLoopStop
+
+    def _match_music_si(self, si=None):
+        idx, si = (si, self.pulse.sink_input_info(si))\
+            if not isinstance(si, self._si_t) else (si.index, si)
+        for k, v in si.proplist.viewitems():
+            v = '{}={}'.format(k, v)
+            m = re.search(self.si_filter_regexp, v)
+            if self.si_filter_debug:
+                self.log.debug(' - prop%s: %r', ['', '[MATCH]'][bool(m)], v)
+            if m: return si
+        # self.log.debug('Ignoring unmatched sink-input: %s', si)
 
     def poll_wakeup(self):
         if not self.pulse: return
@@ -433,29 +470,102 @@ class PulseClient(object):
 
     @err_report
     def poll(self, timeout=None):
-        # Only safe to call pulse stuff here, before entering loop
+        # Only safe to call pulse stuff from here
+        deadline = mono_time() + timeout
+        delay = [deadline]
+
+        if self.changes:
+            if 'pjsua-volume' in self.changes:
+                t, v = self.changes.pop('pjsua-volume')
+                if not self.si_pjsua:
+                    pid = os.getpid()
+                    for si in self.pulse.sink_input_list():
+                        pid_chk = int(si.proplist.get('application.process.id') or 0)
+                        m = pid_chk == pid
+                        if self.si_filter_debug:
+                            self.log.debug( 'Sink-input %s proc-id check: %s (si) =='
+                                ' %s (pjsua)%s', si.index, pid_chk, pid, ' [MATCH]' if m else '' )
+                        if m: self.si_pjsua = si
+                if self.si_pjsua:
+                    try:
+                        v_old = self.pulse.volume_get_all_chans(self.si_pjsua)
+                        if round(v, 2) != round(v_old, 2):
+                            self.log.debug( 'Setting pjsua stream'
+                                ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
+                        self.pulse.volume_set_all_chans(self.si_pjsua, v)
+                    except self.PulseIndexError: self.si_pjsua = None
+                else:
+                    self.log.warn( 'Failed to detect pjsua stream'
+                        ' in pulse sink inputs, not adjusting volume for it' )
+            if 'music-fade' in self.changes:
+                t, state = self.changes['music-fade']
+                if not state:
+                    state = self.fade[t].copy()
+                    if state['duration'] >= 0:
+                        state.update( step=1, vol_base=dict(),
+                            ts_start=mono_time() + state['offset'],
+                            si_list=filter(self._match_music_si, self.pulse.sink_input_list()) )
+                        if t == 'out':
+                            state['vol_base'].update(
+                                (si.index, self.pulse.volume_get_all_chans(si)) for si in state['si_list'] )
+                            self.volume['fade'] = state['vol_base'] # to restore same levels on fade-in
+                        else:
+                            vol_base, vol_base_prev = state['vol_base'], self.volume.pop('fade', dict())
+                            for si in state['si_list']:
+                                if si.index in vol_base_prev: vol_base[si.index] = vol_base_prev[si.index]
+                                elif self.volume['music'] > 0: vol_base[si.index] = self.volume['music']
+                        self.log.debug( 'Starting music fade-%s'
+                            ' for %s pulse stream(s)', t, len(state['vol_base']) )
+                    else: state['step'] = state['steps']
+                    self.changes['music-fade'] = t, state
+                for n in xrange(state['step'], state['steps']):
+                    state['step'], n, ts = n, n + 1, mono_time()
+                    ts_step = state['ts_start'] + (state['duration'] * (n / float(state['steps'])))
+                    if ts_step > ts:
+                        delay.append(ts_step)
+                        break
+                    for si in state['si_list']:
+                        try: v_base = state['vol_base'][si.index]
+                        except KeyError: continue
+                        v_range, k = max(0, v_base - state['min']), n / float(state['steps'])
+                        if t == 'out': k = 1 - k
+                        v = state['min'] + v_range * k
+                        # self.log.debug( 'Stream %s music fade-%s step'
+                        # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, state['steps'], v_base, v )
+                        try: self.pulse.volume_set_all_chans(si, v)
+                        except self.PulseIndexError: pass
+                else:
+                    v = None
+                    if t == 'in':
+                        if self.volume['music'] > 0: v = self.volume['music']
+                    else: v = 0
+                    if v is not None:
+                        for si in state['si_list']:
+                            try: self.pulse.volume_set_all_chans(si, v)
+                            except self.PulseIndexError: pass
+                        self.log.debug('Finished music fade-%s sequence, final volume: %.2f', t, v)
+                    del self.changes['music-fade']
+
         while self.si_queue:
-            idx = self.si_queue.popleft()
-            if idx is None:
+            si = self.si_queue.popleft()
+            if si is None:
                 self.si_queue.extend(self.pulse.sink_input_list())
                 continue
             try:
-                idx, si = (idx, self.pulse.sink_input_info(idx))\
-                    if not isinstance(idx, self._si_t) else (idx.index, idx)
-                for k, v in si.proplist.viewitems():
-                    v = '{}={}'.format(k, v)
-                    m = re.search(self.si_filter_regexp, v)
-                    if self.si_filter_debug:
-                        self.log.debug(' - prop%s: %r', ['', '[MATCH]'][bool(m)], v)
-                    if m: break
-                else:
-                    self.log.debug('Ignoring unmatched sink-input: %s', si)
-                    continue
-                self.log.debug( 'Setting mute to %s'
-                    ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
-                self.pulse.mute(si, self.music_muted)
+                si = self._match_music_si(si)
+                if si:
+                    if not self.music_muted and self.volume['music'] >= 0:
+                        self.pulse.volume_set_all_chans(si, self.volume['music'])
+                    self.log.debug( 'Setting mute to %s'
+                        ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
+                    self.pulse.mute(si, self.music_muted)
             except self.PulseIndexError: continue
-        self.pulse.event_listen(timeout)
+
+        delay = min(delay) - mono_time()
+        if delay > 0:
+            try: self.pulse.event_listen(delay)
+            except:
+                if self.pulse: raise
 
 
 
@@ -529,8 +639,17 @@ class PagingServer(object):
         assert not self.lib
 
         self.log.debug('pulse init')
+        conf_volume = dict(
+            (k, getattr(self.conf, 'audio_volume_{}'.format(k)) / 100.0)
+            for k in ['music', 'klaxon', 'call'] )
+        conf_fade= dict( (t, dict(
+            (k, getattr(self.conf, 'audio_music_fade_{}_{}'.format(t, k)))
+            for k in ['duration', 'offset', 'min'] )) for t in ['in', 'out'] )
+        for t, v in conf_fade.viewitems(): v['min'] /= 100.0
         self.pulse = PulseClient(
-            self.conf.audio_pulse_mute, self.conf.server_dump_pulse_props )
+            volume=conf_volume, fade=conf_fade,
+            si_filter_regexp=self.conf.audio_pulse_match,
+            si_filter_debug=self.conf.server_dump_pulse_props )
 
         self.log.debug('pjsua init')
 
@@ -575,21 +694,22 @@ class PagingServer(object):
 
 
     @contextmanager
-    def poll_wakeup(self, loop_interval=0.1):
+    def poll_wakeup(self, loop_wait=5.0, loop_interval=0.1):
         'Anything poll-related MUST be done in this context.'
-        if not self.pulse: return
-        with self._poll_hold:
-            for n in xrange(int(5.0 / loop_interval)):
-                # wakeup only works when loop is actually started,
-                #  which might not be the case regardless of any locks.
-                self.pulse.poll_wakeup()
-                if self._poll_lock.acquire(False): break
-                time.sleep(loop_interval)
-            else:
-                raise PagingServerError('poll_wakeup() hangs, likely locking issue')
-            assert self.running
-            try: yield
-            finally: self._poll_lock.release()
+        lock = self.pulse and self.running is not False
+        if lock:
+            with self._poll_hold:
+                for n in xrange(int(loop_wait / loop_interval)):
+                    # wakeup only works when loop is actually started,
+                    #  which might not be the case regardless of any locks.
+                    self.pulse.poll_wakeup()
+                    if self._poll_lock.acquire(False): break
+                    time.sleep(loop_interval)
+                else:
+                    raise PagingServerError('poll_wakeup() hangs, likely locking issue')
+                try: yield
+                finally: self._poll_lock.release()
+        else: yield
 
     def poll_callback(self, func, delay=None, ts=None):
         with self.poll_wakeup():
@@ -680,8 +800,12 @@ class PagingServer(object):
     def conf_port_connect(self, conf_port):
         self.lib.conf_connect(conf_port, self.pj_out_port)
 
-    def set_music_mute(self, state):
-        with self.poll_wakeup(): self.pulse.set_music_mute(state)
+    def set_music_mute(self, muted):
+        with self.poll_wakeup(): self.pulse.set_music_mute(muted)
+
+    def set_volume_level(self, state):
+        assert state in ['klaxon', 'call']
+        with self.poll_wakeup(): self.pulse.set_pjsua_volume(state)
 
 
     @contextmanager
@@ -777,6 +901,8 @@ def main(args=None, defaults=None):
         help='Dump the list of conference ports that pjsua creates after init and exit.')
     group.add_argument('--test-audio-file', metavar='path',
         help='Play specified wav file from pjsua output and exit.'
+            ' Sound will be played with call volume level, if set via'
+                ' config file (see "volume-call" option in "[audio]" section there).'
             ' Can be useful to test whether sound output from SIP calls is setup and working correctly.')
 
     group = parser.add_argument_group(
@@ -886,6 +1012,7 @@ def main(args=None, defaults=None):
         with server_ctx as server:
             try:
                 server.init_outputs()
+                server.set_volume_level('call')
                 server.wav_play_sync(opts.test_audio_file)
             except PSConfigurationError as err:
                 print(bytes(err), file=sys.stderr)
