@@ -11,7 +11,7 @@ except IOError: readme = ''
 setup(
 
     name = 'PagingServer',
-    version = '16.4.4',
+    version = '16.4.5',
     author = 'Dan Ryan, Mike Kazantsev',
     author_email = 'dan@seattlemesh.net, mk.fraggod@gmail.com',
     license = 'GPL-2',
