@@ -22,9 +22,9 @@ class Conf(object):
     audio_klaxon_tmpdir = ''
     audio_klaxon_max_length = 10.0
     audio_klaxon_padding = 0.0
-    audio_pjsua_device = '^pulse$'
+    audio_pjsua_device = r'^pulse$'
     audio_pjsua_conf_port = '' # there should be only one
-    audio_pulse_match = '^application\.process\.binary=mpd$'
+    audio_pulse_match = r'^application\.process\.binary=mpd$'
 
     audio_volume_music = -1.0
     audio_volume_klaxon = -1.0
@@ -352,7 +352,6 @@ class PSAccountState(PSCallbacks):
                 ' to call-duration limit (%ds), elapsed: %ds',
             cs.caller, cs.call_state, self.hang_up_after, ts_diff )
         cs.call.hangup(reason='call duration limit')
-
 
 
 class PSCallState(PSCallbacks):
