@@ -297,8 +297,12 @@ class PSAccountState(PSCallbacks):
         self.log.info('Handling call: %s', cs.caller)
         self.call_active = cs
         self.server.set_music_mute(True)
-        self.server.set_volume_level('klaxon')
-        self.server.wav_play_sync(self.server.conf.audio_klaxon)
+        if self.server.conf.audio_klaxon:
+            self.server.set_volume_level('klaxon')
+            self.server.wav_play_sync(
+                self.server.conf.audio_klaxon,
+                max_len=self.conf.audio_klaxon_max_length,
+                padding=self.conf.audio_klaxon_padding )
         self.server.set_volume_level('call')
         cs.call.answer()
         if self.hang_up_after > 0:
@@ -851,12 +855,12 @@ class PagingServer(object):
         with closing(wave.open(path, 'r')) as src:
             return src.getnframes() / float(src.getframerate())
 
-    def wav_play_sync(self, path):
-        ts_diff, ts_diff_max = self.wav_length(path), self.conf.audio_klaxon_max_length
-        if ts_diff_max > 0: ts_diff = min(ts_diff, ts_diff_max)
+    def wav_play_sync(self, path, max_len=None, padding=0):
+        ts_diff = self.wav_length(path)
+        if max_len and max_len > 0: ts_diff = min(ts_diff, max_len)
         with self.wav_play(path) as port:
             self.log.debug('Started blocking playback of wav for time: %.1fs', ts_diff)
-            self.poll(ts_diff + self.conf.audio_klaxon_padding)
+            self.poll(ts_diff + padding)
             self.log.debug('wav playback finished')
 
 
