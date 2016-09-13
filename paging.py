@@ -301,8 +301,8 @@ class PSAccountState(PSCallbacks):
             self.server.set_volume_level('klaxon')
             self.server.wav_play_sync(
                 self.server.conf.audio_klaxon,
-                max_len=self.conf.audio_klaxon_max_length,
-                padding=self.conf.audio_klaxon_padding )
+                max_len=self.server.conf.audio_klaxon_max_length,
+                padding=self.server.conf.audio_klaxon_padding )
         self.server.set_volume_level('call')
         cs.call.answer()
         if self.hang_up_after > 0:
