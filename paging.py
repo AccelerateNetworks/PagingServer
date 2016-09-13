@@ -721,6 +721,10 @@ class PagingServer(object):
     def __exit__(self, *err): self.close()
 
 
+    def poll_busywork(self):
+        'Stuff to do after every poll cycle.'
+        if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
+
     @contextmanager
     def poll_wakeup(self, loop_wait=5.0, loop_interval=0.1):
         'Anything poll-related MUST be done in this context.'
@@ -768,8 +772,8 @@ class PagingServer(object):
         self.running, ts_deadline = True, timeout and mono_time() + timeout
         while True:
             with self._poll_hold: self._poll_lock.acquire() # fuck threads
+            ts = mono_time()
             try:
-                ts = mono_time()
                 if not self.sd_cycle or not self.sd_cycle.ts_next: delay = 600
                 else:
                     delay = self.sd_cycle.ts_next - ts
@@ -788,7 +792,8 @@ class PagingServer(object):
                         break
                 # self.log.debug('poll delay: %.1f', delay)
                 self.pulse.poll(max(0, delay))
-                if self.conf.audio_klaxon_tmpdir: os.utime(self.conf.audio_klaxon_tmpdir, None)
+                self.poll_busywork()
+                ts = mono_time()
                 if ts_deadline and ts > ts_deadline: break
             finally: self._poll_lock.release()
 
