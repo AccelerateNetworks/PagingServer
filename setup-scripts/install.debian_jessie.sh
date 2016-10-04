@@ -222,7 +222,7 @@ if getent passwd paging &>/dev/null ; then
 		mkdir -p -m700 /home/paging
 		chown -R paging: /home/paging
 	}
-else useradd -r -d /home/paging -s /bin/false -G audio paging
+else useradd -r -md /home/paging -s /bin/false -G audio paging
 fi
 
 [[ -e /etc/paging.conf ]]\
