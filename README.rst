@@ -221,7 +221,7 @@ Debian Jessie
     # apt-get install --no-install-recommends pulseaudio pulseaudio-utils alsa-utils
     # apt-get install paging-server python-systemd
 
-    # useradd -r -d /var/empty -s /bin/false -G audio paging
+    # useradd -rm -s /bin/false -G audio paging
     # install -o root -g paging -m640 -T /usr/share/doc/paging-server/paging.example.conf /etc/paging.conf
 
   Configure, set-levels and unmute alsa/pulse, if necessary (depends heavily on
