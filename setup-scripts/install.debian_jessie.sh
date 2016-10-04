@@ -93,14 +93,14 @@ pulseaudio --version | grep '^pulseaudio '\
 	|| die "Failed to match valid pulseaudio version from 'pulseaudio --version'"
 
 
-apt_install curl build-essential checkinstall python python-dev python-setuptools
+apt_install curl build-essential checkinstall python python-dev python-setuptools libasound2-dev
 
 cc --version
 make --version
 python2-config --includes
 
 dpkg_check pjproject python-pjsua >/dev/null || {
-	pj_ver=2.4.5
+	pj_ver=2.5.5
 	pj_dir="pjproject-${pj_ver}"
 	pj_tar=/tmp/"${pj_dir}.tar.bz2"
 	pj_url=http://www.pjsip.org/release/"${pj_ver}/${pj_dir}.tar.bz2"
