@@ -588,7 +588,7 @@ class PulseClient(object):
     @err_report
     def poll(self, timeout=None):
         # Only safe to call pulse here, and before event_listen()
-        wakeups = [mono_time() + timeout] + self._process_changes()
+        wakeups = [mono_time() + timeout] + (self._process_changes() or list())
         delay = min(wakeups) - mono_time()
         if delay > 0:
             try: self.pulse.event_listen(delay)
