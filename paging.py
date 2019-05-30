@@ -502,24 +502,30 @@ class PulseClient(object):
         v = self.volume[t]
         if v <= 0: return
         if self.volume[t] >= 0: v = self.volume[t]
+        for n in range(2):
+            if not self.si_pjsua:
+                pid = os.getpid() # pjsua runs in a thread of this process
+                for si in self.pulse.sink_input_list():
+                    pid_chk = int(si.proplist.get('application.process.id') or 0)
+                    m = pid_chk == pid
+                    if self.si_filter_debug:
+                        self.log.debug( 'Sink-input %s proc-id check: %s (si) =='
+                            ' %s (pjsua)%s', si.index, pid_chk, pid, ' [MATCH]' if m else '' )
+                    if not m: continue
+                    self.si_pjsua = si
+                    break
+            if self.si_pjsua:
+                try:
+                    v_old = self.pulse.volume_get_all_chans(self.si_pjsua)
+                    if round(v, 2) != round(v_old, 2):
+                        self.log.debug( 'Setting pjsua stream'
+                            ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
+                    self.pulse.volume_set_all_chans(self.si_pjsua, v)
+                except self.PulseOperationFailed:
+                    self.si_pjsua = None
+                    continue # check other streams, retry
+            break
         if not self.si_pjsua:
-            pid = os.getpid()
-            for si in self.pulse.sink_input_list():
-                pid_chk = int(si.proplist.get('application.process.id') or 0)
-                m = pid_chk == pid
-                if self.si_filter_debug:
-                    self.log.debug( 'Sink-input %s proc-id check: %s (si) =='
-                        ' %s (pjsua)%s', si.index, pid_chk, pid, ' [MATCH]' if m else '' )
-                if m: self.si_pjsua = si
-        if self.si_pjsua:
-            try:
-                v_old = self.pulse.volume_get_all_chans(self.si_pjsua)
-                if round(v, 2) != round(v_old, 2):
-                    self.log.debug( 'Setting pjsua stream'
-                        ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
-                self.pulse.volume_set_all_chans(self.si_pjsua, v)
-            except self.PulseIndexError: self.si_pjsua = None
-        else:
             self.log.warn( 'Failed to detect pjsua stream'
                 ' in pulse sink inputs, not adjusting volume for it' )
         return; yield
