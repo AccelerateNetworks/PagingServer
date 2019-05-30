@@ -413,13 +413,12 @@ class PulseClient(object):
 
     def __init__(self, si_filter_regexp, si_filter_debug=False, volume=None, fade=None):
         from pulsectl import ( Pulse, PulseSinkInputInfo,
-            PulseLoopStop, PulseIndexError, PulseError )
+            PulseOperationFailed, PulseLoopStop, PulseIndexError, PulseError )
         # Running client here might start pa pid, so defer it until we actually
         #  init audio output, and not started to just display some info and exit.
         self.si_filter_regexp, self.si_filter_debug = si_filter_regexp, si_filter_debug
         self._connect, self._si_t, self.pulse = Pulse, PulseSinkInputInfo, None
-        self.PulseIndexError, self.PulseError, self.PulseLoopStop =\
-            PulseIndexError, PulseError, PulseLoopStop
+        self.PulseError, self.PulseLoopStop = PulseError, PulseLoopStop
         self.log = get_logger()
 
         self.volume = dict(zip(['music', 'klaxon', 'call'], it.repeat(-1)))
@@ -493,7 +492,7 @@ class PulseClient(object):
                     self.log.debug( 'Setting mute to %s'
                         ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
                     self.pulse.mute(si, self.music_muted)
-            except self.PulseIndexError: continue
+            except self.PulseError: continue
 
         return wakeups
 
@@ -521,7 +520,7 @@ class PulseClient(object):
                         self.log.debug( 'Setting pjsua stream'
                             ' volume level: %.2f -> %.2f (%s)', v_old, v, t )
                     self.pulse.volume_set_all_chans(self.si_pjsua, v)
-                except self.PulseOperationFailed:
+                except self.PulseError:
                     self.si_pjsua = None
                     continue # check other streams, retry
             break
@@ -554,7 +553,7 @@ class PulseClient(object):
                 if v is not None:
                     v_si_max[si.index], v_si_min[si.index] = v, s['min']
                     try: self.pulse.volume_set_all_chans(si, v_si_min[si.index])
-                    except self.PulseIndexError: pass
+                    except self.PulseError: pass
             self.set_music_mute()
         v_si_len = len(set(v_si_max.keys() + v_si_min.keys()))
 
@@ -574,7 +573,7 @@ class PulseClient(object):
                 # self.log.debug( 'Stream %s music fade-%s step'
                 # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, s['steps'], v_min, v )
                 try: self.pulse.volume_set_all_chans(si, v)
-                except self.PulseIndexError: pass
+                except self.PulseError: pass
 
         for si in si_list:
             if t == 'out': v = v_si_min.get(si.index, s['min'])
@@ -582,7 +581,7 @@ class PulseClient(object):
                 v = v_si_max.get(si.index)
                 if v is None: continue
             try: self.pulse.volume_set_all_chans(si, v)
-            except self.PulseIndexError: pass
+            except self.PulseError: pass
 
         self.log.debug('Finished music fade-%s sequence for %s stream(s)', t, v_si_len)
         self.set_music_mute()
@@ -624,15 +623,15 @@ class PagingServer(object):
 
 
     def match_info(self, infos, spec, kind):
+        infos_match, infos_left = list(), list()
         if spec.isdigit():
-            try: infos = [infos[int(spec)]]
+            try: infos_match = [infos[int(spec)]]
             except KeyError:
                 self.log.error( 'Failed to find %s with id=%s,'
                     ' available: %s', kind, spec, ', '.join(map(bytes, infos.keys())) )
-                infos = list()
+                infos_match, infos_left = list(), infos
         else:
             info_re = re.compile(spec, re.I)
-            infos_match, infos_left = list(), list()
             for info in infos.viewvalues():
                 dst_list = infos_match if info_re.search(info['name']) else infos_left
                 dst_list.append(info)
