@@ -18,7 +18,7 @@ usage() {
 }
 
 [[ "$1" == -x ]] || {
-	grep -q '^Hardware[[:space:]]*:[[:space:]]*sun8i$' /proc/cpuinfo\
+	grep -q '^Hardware[[:space:]]*:[[:space:]]*Allwinner[[:space:]]*sun8i[[:space:]]*Family$' /proc/cpuinfo\
 			&& grep -q '^Debian GNU/Linux 9 ' /etc/issue || {
 		echo >&2 "Failed to match Hardware=sun8i in /proc/cpuinfo"
 		echo >&2 " or 'Debian GNU/Linux 9' in /etc/issue."
@@ -70,10 +70,9 @@ echo
 echo '-----===== Step: alsa config/levels/mute setup'
 echo
 
-## TODO Need to set Line Out & DAC under H3 Audio Codec to 100% volume
-# amixer sset 'Lineout volume control' 31
-# amixer sset 'Audio lineout' on
-# alsactl store
+amixer -c 0 sset 'Line Out' 31
+amixer -c 0 sset 'DAC' 63
+alsactl store
 
 ## PulseAudio should be doing all softvol stuff here
 # cat >/etc/asound.conf <<EOF
