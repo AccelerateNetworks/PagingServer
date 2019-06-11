@@ -375,6 +375,9 @@ Configuration here can be roughly divided into these sections (at the moment):
   brackets on the left) or regexp (python style) to match against name in the
   list via ``pjsua-device`` option.
 
+  Note: at this time (6/1/2019) numeric id matching seems to cause a crash, set
+  ``pjsua-device = sysdefault`` or similar to ensure a match.
+
   To avoid having any confusing non-ALSA (incl. pulse-alsa emulation) ports
   there, PortAudio can be compiled with only ALSA as a backend.
 
