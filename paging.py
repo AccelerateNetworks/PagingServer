@@ -296,7 +296,7 @@ class PSAccountState(PSCallbacks):
     def call_init(self, cs):
         self.log.info('Handling call: %s', cs.caller)
         self.call_active = cs
-        self.server.set_music_mute(True)
+        #self.server.set_music_mute(True)
         if self.server.conf.audio_klaxon:
             self.server.set_volume_level('klaxon')
             self.server.wav_play_sync(
@@ -345,7 +345,7 @@ class PSAccountState(PSCallbacks):
     def on_cs_disconnected(self, cs):
         self.call_cleanup(cs)
         if self.call_queue: self.call_init(self.call_queue.popleft())
-        else: self.server.set_music_mute(False)
+        #else: self.server.set_music_mute(False)
 
     @err_report
     def on_cs_timeout(self, cs, ts0=None):
@@ -484,15 +484,15 @@ class PulseClient(object):
             if si is None:
                 self.si_queue.extend(self.pulse.sink_input_list())
                 continue
-            try:
-                si = self._match_music_si(si)
-                if si:
-                    if not self.music_muted and self.volume['music'] >= 0:
-                        self.pulse.volume_set_all_chans(si, self.volume['music'])
-                    self.log.debug( 'Setting mute to %s'
-                        ' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
-                    self.pulse.mute(si, self.music_muted)
-            except self.PulseError: continue
+            #try:
+                #si = self._match_music_si(si)
+                #if si:
+                    #if not self.music_muted and self.volume['music'] >= 0:
+                        #self.pulse.volume_set_all_chans(si, self.volume['music'])
+                    #self.log.debug( 'Setting mute to %s'
+                        #' for sink-input: %s', ['OFF', 'ON'][self.music_muted], si )
+                    #self.pulse.mute(si, self.music_muted)
+            #except self.PulseError: continue
 
         return wakeups
 
@@ -531,60 +531,61 @@ class PulseClient(object):
 
     @err_report
     def _change_fade(self, t):
-        s = self.fade[t]
-        if s['duration'] <= 0:
-            self.set_music_mute()
-            return
-
-        ts_start = mono_time() + s['offset']
-        si_list = filter(self._match_music_si, self.pulse.sink_input_list())
-        v_si_min, v_si_max = dict(), dict()
-        if t == 'out':
-            v_si_max.update(
-                (si.index, self.pulse.volume_get_all_chans(si)) for si in si_list )
-            v_si_min.update((si.index, s['min']) for si in si_list)
-            self.volume['fade'] = v_si_max # to restore same levels on fade-in
-        else:
-            v_si_max_prev = self.volume.pop('fade', dict())
-            for si in si_list:
-                v = None
-                if si.index in v_si_max_prev: v = v_si_max_prev[si.index]
-                elif self.volume['music'] > 0: v = self.volume['music']
-                if v is not None:
-                    v_si_max[si.index], v_si_min[si.index] = v, s['min']
-                    try: self.pulse.volume_set_all_chans(si, v_si_min[si.index])
-                    except self.PulseError: pass
-            self.set_music_mute()
-        v_si_len = len(set(v_si_max.keys() + v_si_min.keys()))
-
-        self.log.debug('Starting music fade-%s for %s pulse stream(s)', t, v_si_len)
-        for n in xrange(1, s['steps']+1):
-            ts_step = ts_start + (s['duration'] * (n / float(s['steps'])))
-            while True:
-                ts = mono_time()
-                if ts_step > mono_time(): yield ts_step
-                else: break
-            for si in si_list:
-                try: v_max = v_si_max[si.index]
-                except KeyError: continue
-                v_min = v_si_min.get(si.index, s['min'])
-                v_range, k = max(0, v_max - v_min), n / float(s['steps'])
-                v = v_min + v_range * (k if t == 'in' else (1-k))
-                # self.log.debug( 'Stream %s music fade-%s step'
-                # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, s['steps'], v_min, v )
-                try: self.pulse.volume_set_all_chans(si, v)
-                except self.PulseError: pass
-
-        for si in si_list:
-            if t == 'out': v = v_si_min.get(si.index, s['min'])
-            else:
-                v = v_si_max.get(si.index)
-                if v is None: continue
-            try: self.pulse.volume_set_all_chans(si, v)
-            except self.PulseError: pass
-
-        self.log.debug('Finished music fade-%s sequence for %s stream(s)', t, v_si_len)
-        self.set_music_mute()
+        # s = self.fade[t]
+        # if s['duration'] <= 0:
+        #     self.set_music_mute()
+        #     return
+        #
+        # ts_start = mono_time() + s['offset']
+        # si_list = filter(self._match_music_si, self.pulse.sink_input_list())
+        # v_si_min, v_si_max = dict(), dict()
+        # if t == 'out':
+        #     v_si_max.update(
+        #         (si.index, self.pulse.volume_get_all_chans(si)) for si in si_list )
+        #     v_si_min.update((si.index, s['min']) for si in si_list)
+        #     self.volume['fade'] = v_si_max # to restore same levels on fade-in
+        # else:
+        #     v_si_max_prev = self.volume.pop('fade', dict())
+        #     for si in si_list:
+        #         v = None
+        #         if si.index in v_si_max_prev: v = v_si_max_prev[si.index]
+        #         elif self.volume['music'] > 0: v = self.volume['music']
+        #         if v is not None:
+        #             v_si_max[si.index], v_si_min[si.index] = v, s['min']
+        #             try: self.pulse.volume_set_all_chans(si, v_si_min[si.index])
+        #             except self.PulseError: pass
+        #     #self.set_music_mute()
+        # v_si_len = len(set(v_si_max.keys() + v_si_min.keys()))
+        #
+        # self.log.debug('Starting music fade-%s for %s pulse stream(s)', t, v_si_len)
+        # for n in xrange(1, s['steps']+1):
+        #     ts_step = ts_start + (s['duration'] * (n / float(s['steps'])))
+        #     while True:
+        #         ts = mono_time()
+        #         if ts_step > mono_time(): yield ts_step
+        #         else: break
+        #     for si in si_list:
+        #         try: v_max = v_si_max[si.index]
+        #         except KeyError: continue
+        #         v_min = v_si_min.get(si.index, s['min'])
+        #         v_range, k = max(0, v_max - v_min), n / float(s['steps'])
+        #         v = v_min + v_range * (k if t == 'in' else (1-k))
+        #         # self.log.debug( 'Stream %s music fade-%s step'
+        #         # 	' %s/%s: base=%.2f level=%.2f', si.index, t, n, s['steps'], v_min, v )
+        #         try: self.pulse.volume_set_all_chans(si, v)
+        #         except self.PulseError: pass
+        #
+        # for si in si_list:
+        #     if t == 'out': v = v_si_min.get(si.index, s['min'])
+        #     else:
+        #         v = v_si_max.get(si.index)
+        #         if v is None: continue
+        #     try: self.pulse.volume_set_all_chans(si, v)
+        #     except self.PulseError: pass
+        #
+        # self.log.debug('Finished music fade-%s sequence for %s stream(s)', t, v_si_len)
+        # self.set_music_mute()
+        self.log.debug('Finished unused music fade-%s sequence for %s stream(s)', t, v_si_len)
 
     def poll_wakeup(self):
         if not self.pulse: return
